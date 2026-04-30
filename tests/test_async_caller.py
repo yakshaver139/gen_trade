@@ -1,14 +1,12 @@
+from concurrent.futures import ThreadPoolExecutor
 
-from async_caller import future_caller, ThreadPoolExecutor
+from gentrade.async_caller import future_caller
 
-def sum_four(a, b, c, d):
+
+def _sum_four(a, b, c, d):
     return a + b + c + d
 
 
-def test_future_caller():
-    a, b, c = 1, 2, 3
-
-    all_d_values = [1, 2, 3, 4]
-
-    res = future_caller(sum_four, all_d_values, ThreadPoolExecutor, *[a, b, c])
+def test_future_caller_binds_constants_then_iterable():
+    res = future_caller(_sum_four, [1, 2, 3, 4], ThreadPoolExecutor, 1, 2, 3)
     assert res == (7, 8, 9, 10)

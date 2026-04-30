@@ -41,19 +41,32 @@ with greater parallelism. Additionally, the underlying Python codebase works as 
 dalone Python package and embeds many of the interesting implementation challenges such
 as multiprocessing, modularity and extensibility.
 
-# Usage:
+# Usage
 
-0. Setup the environment.
-`poetry install`
-1. Download data using the Binance Downloader.
-`poetry run run python binance_download.py`
-2. Preprocess the data using `ta_trends` script.
-`poetry run run python ta_trends.py`
-3. Run the genetic algorithm
-`poetry run python genetic.py  --write_local=True --generations=10 --population_size=100 --fitness_function=p`
+This project uses [`uv`](https://docs.astral.sh/uv/) and Python 3.11.
 
-To run on specific strategies (i.e. rerun on previously generated strategies):
-`poetry run python genetic.py --generations=1 --strategies_path=best_strategy.json --output_path=130223.csv`
+```sh
+# 1. install
+uv sync
+
+# 2. run the smoke test (no Binance, no S3 — synthetic data)
+uv run python -m gentrade.smoke
+
+# 3. download real data (requires BINANCE_API and BINANCE_SECRET env vars)
+uv run python -m gentrade.binance_download
+
+# 4. preprocess (adds trend_direction column)
+uv run python -m gentrade.ta_trends
+
+# 5. run the genetic algorithm
+uv run python -m gentrade.genetic --write_local=True --generations=10 --population_size=100 --fitness_function=p
+```
+
+To run on previously-generated strategies:
+
+```sh
+uv run python -m gentrade.genetic --generations=1 --strategies_path=best_strategy.json --output_path=results.csv
+```
 
 ## CLI
 
@@ -107,3 +120,17 @@ when true, saves the output for every 10 strategies tested
 `docker run gen-trade`
 
 Note, the `ecr_push.sh` script can be used for pushing the docker image to ecr to start to run as an ecs service.
+
+## Development
+
+```sh
+uv run pytest
+uv run ruff check gentrade tests
+uv run ruff format gentrade tests
+```
+
+## Status
+
+This is a 2022 dissertation codebase under active revival. See [`PLAN.md`](PLAN.md) for the
+phased plan to take this to production. Phase 0 (revival) is complete; Phase 1 (modelling
+rigor) is the priority next.
