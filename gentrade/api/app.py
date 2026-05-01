@@ -17,11 +17,13 @@ module globals.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -197,6 +199,72 @@ def create_app(
                 buy_and_hold_test=_metrics_out(_metrics_from_json_or_none(row.buy_and_hold_test_json)),
                 random_entry_test=_metrics_out(_metrics_from_json_or_none(row.random_entry_test_json)),
             )
+
+    @app.get("/runs/{run_id}/events")
+    async def get_run_events(run_id: str, _: None = auth) -> StreamingResponse:
+        """Server-sent events stream of progress updates for an in-progress run.
+
+        Emits one ``progress`` event each time the run's
+        ``current_generation`` or ``status`` changes, plus a final
+        ``terminal`` event when the run reaches ``reported`` or
+        ``failed``. Closes immediately if the run is already terminal at
+        connection time, or if the run id is unknown.
+
+        ``X-API-Key`` auth is required (same as every other endpoint);
+        browsers consuming this from EventSource have to use a fetch +
+        ReadableStream shim because EventSource cannot set custom headers.
+        """
+        # Verify the run exists up-front so we return 404 cleanly rather
+        # than silently emitting an empty stream.
+        with Session(engine) as session:
+            row = session.get(RunRow, run_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+
+        async def event_stream():
+            last_gen = -1
+            last_status: str | None = None
+            poll_interval = 1.0
+            # Up to ~10 minutes of inactivity before we close to free the
+            # connection. Live runs rarely sit idle for that long; a
+            # crashed worker would otherwise hold this connection open.
+            max_idle_polls = 600
+            idle = 0
+            while True:
+                with Session(engine) as session:
+                    row = session.get(RunRow, run_id)
+                    if row is None:
+                        yield "event: error\ndata: {\"detail\":\"run vanished\"}\n\n"
+                        return
+                    current_gen = row.current_generation
+                    current_status = row.status
+
+                changed = current_gen != last_gen or current_status != last_status
+                if changed:
+                    payload = json.dumps(
+                        {"current_generation": current_gen, "status": current_status}
+                    )
+                    yield f"event: progress\ndata: {payload}\n\n"
+                    last_gen = current_gen
+                    last_status = current_status
+                    idle = 0
+                else:
+                    idle += 1
+
+                if current_status in ("reported", "failed"):
+                    yield (
+                        "event: terminal\n"
+                        f"data: {json.dumps({'status': current_status})}\n\n"
+                    )
+                    return
+
+                if idle >= max_idle_polls:
+                    yield "event: timeout\ndata: {}\n\n"
+                    return
+
+                await asyncio.sleep(poll_interval)
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     @app.get(
         "/runs/{run_id}/generations/{n}",

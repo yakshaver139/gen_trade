@@ -1066,6 +1066,60 @@
         "summary": "Get Run"
       }
     },
+    "/runs/{run_id}/events": {
+      "get": {
+        "description": "Server-sent events stream of progress updates for an in-progress run.\n\nEmits one ``progress`` event each time the run's\n``current_generation`` or ``status`` changes, plus a final\n``terminal`` event when the run reaches ``reported`` or\n``failed``. Closes immediately if the run is already terminal at\nconnection time, or if the run id is unknown.\n\n``X-API-Key`` auth is required (same as every other endpoint);\nbrowsers consuming this from EventSource have to use a fetch +\nReadableStream shim because EventSource cannot set custom headers.",
+        "operationId": "get_run_events_runs__run_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Events"
+      }
+    },
     "/runs/{run_id}/generations/{n}": {
       "get": {
         "operationId": "get_generation_runs__run_id__generations__n__get",

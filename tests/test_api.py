@@ -338,6 +338,55 @@ def test_post_backtest_reruns_saved_strategy(client):
             assert k in first
 
 
+def test_sse_events_stream_reports_progress_and_terminates(client):
+    """The events stream emits at least one progress event and a terminal one."""
+    c, _ = client
+    body = c.post(
+        "/runs",
+        json={"asset": "TEST-15m", "population_size": 4, "generations": 2, "seed": 42},
+        headers={"X-API-Key": API_KEY},
+    ).json()
+    run_id = body["run_id"]
+
+    events: list[str] = []
+    with c.stream(
+        "GET",
+        f"/runs/{run_id}/events",
+        headers={"X-API-Key": API_KEY},
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        for line in resp.iter_lines():
+            events.append(line)
+            # The terminal event closes the stream; safety bound below.
+            if "event: terminal" in line:
+                pass
+            if len(events) > 200:
+                break
+
+    blob = "\n".join(events)
+    assert "event: progress" in blob
+    assert "event: terminal" in blob
+    assert '"status": "reported"' in blob
+
+
+def test_sse_events_unknown_run_returns_404(client):
+    c, _ = client
+    r = c.get("/runs/not-a-real-id/events", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 404
+
+
+def test_sse_events_requires_auth(client):
+    c, _ = client
+    body = c.post(
+        "/runs",
+        json={"asset": "TEST-15m", "population_size": 4, "generations": 2, "seed": 42},
+        headers={"X-API-Key": API_KEY},
+    ).json()
+    r = c.get(f"/runs/{body['run_id']}/events")  # no key
+    assert r.status_code == 401
+
+
 def test_post_backtest_unknown_strategy_returns_404(client):
     c, _ = client
     r = c.post(
