@@ -114,6 +114,95 @@ path to save outputs
 when true, saves the output for every 10 strategies tested
 ```
 
+## API server
+
+The Phase 3 FastAPI service exposes runs, generations, and ad-hoc backtests over HTTP.
+
+### Quickest path: zero-config dev server
+
+```sh
+./scripts/dev_server.sh
+```
+
+This synthesises a deterministic OHLCV+indicators frame in `.dev/`, registers it as the
+`SAW-15m` asset, generates a fresh API key, and execs `uvicorn`. Everything (db,
+per-run logs, bars, asset registry) lives in `.dev/` (git-ignored).
+
+```sh
+# different port
+PORT=9000 ./scripts/dev_server.sh
+
+# pin the API key across restarts
+GENTRADE_API_KEY=mykey ./scripts/dev_server.sh
+```
+
+The script prints the API key + ready-to-run curl examples on startup. Swagger UI
+is at `http://127.0.0.1:8000/docs` — click **Authorize** and paste the key to
+exercise endpoints from the browser.
+
+### Manual setup against real data
+
+```sh
+# 1. required: API key. Server fails closed (503) without one.
+export GENTRADE_API_KEY=$(openssl rand -hex 32)
+
+# 2. register at least one asset. Clients refer to it by name; the server
+#    resolves to the CSV. Asset paths must resolve under GENTRADE_DATA_ROOT.
+mkdir -p data
+cat > data/assets.json <<'JSON'
+[
+  {"asset": "BTCUSDC-15m", "exchange": "binance", "interval": "15m",
+   "path": "/abs/path/to/data/BTCUSDC_indicators.csv"}
+]
+JSON
+export GENTRADE_ASSETS_PATH=$(pwd)/data/assets.json
+export GENTRADE_DATA_ROOT=$(pwd)/data
+
+# 3. (optional) DB and log dir
+export GENTRADE_DB_URL=sqlite:///$(pwd)/gentrade.db
+export GENTRADE_LOG_DIR=$(pwd)/runs
+
+# 4. start the server
+uv run uvicorn gentrade.api.app:default_app --factory --host 127.0.0.1 --port 8000
+```
+
+### Hitting the API
+
+```sh
+# health (unauthenticated)
+curl http://127.0.0.1:8000/healthz
+
+# list registered assets
+curl -H "X-API-Key: $GENTRADE_API_KEY" http://127.0.0.1:8000/assets
+
+# kick off a run (returns 202 + run_id; runs in a background thread)
+curl -X POST http://127.0.0.1:8000/runs \
+  -H "X-API-Key: $GENTRADE_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"asset":"SAW-15m","population_size":10,"generations":5,"seed":42}'
+
+# poll for status
+curl -H "X-API-Key: $GENTRADE_API_KEY" http://127.0.0.1:8000/runs/<run_id>
+
+# rerun a saved strategy on its original windows
+curl -X POST http://127.0.0.1:8000/backtests \
+  -H "X-API-Key: $GENTRADE_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"run_id":"<run_id>","strategy_id":"<strategy_id>"}'
+```
+
+Tips:
+
+- **Process restarts kill in-flight runs.** Their state is checkpointed every generation,
+  so you can recover them with `gentrade resume <run_id>` from the CLI.
+- **`--reload` is not safe** with the daemon-thread job runner — it kills running jobs
+  without finalising. Use it only when no runs are in flight.
+- **Per-run logs** stream to `<GENTRADE_LOG_DIR>/<run_id>/run.log` so you can
+  `tail -f` without grepping uvicorn stdout.
+- **Adding endpoints?** Regenerate `openapi.json` with
+  `uv run python -m gentrade.api.export_openapi > openapi.json` and review the diff —
+  the snapshot is asserted against by `tests/test_api.py`.
+
 ## Docker
 
 `docker build -t gen-trade .`
