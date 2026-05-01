@@ -57,10 +57,16 @@ uv sync
 # smoke test (synthetic data, no network, no API key needed)
 uv run python -m gentrade.smoke
 
-# real data — needs BINANCE_API + BINANCE_SECRET env vars
-uv run python -m gentrade.binance_download
-uv run python -m gentrade.ta_trends   # adds trend_direction column
+# fetch real data — any ccxt exchange, no Binance creds required for
+# public OHLCV. Output is a Parquet file with TA indicators precomputed.
+uv run gentrade ingest --exchange binance --asset BTC/USDT --interval 15m \
+                       --since 2022-01-01 --out ./data/BTCUSDT-15m.parquet
 ```
+
+The legacy `python -m gentrade.binance_download` + `gentrade.ta_trends` pair
+still works for backward compatibility but isn't the recommended path —
+`gentrade ingest` covers more exchanges and writes a single self-contained
+Parquet file in one step.
 
 There are two ways to drive a run after that: the **CLI** for one-off
 runs, or the **API + UI** for a hands-off, browse-able experience.
@@ -270,6 +276,10 @@ there could be a calculation error." The Phase 1 work is the audit of that claim
 - Pins a regression suite (`tests/regression/`): a fixed seed + synthetic dataset produces a
   fully-pinned report. Any change to selection / metrics / backtest / walk-forward must explain
   its diff against the pinned numbers.
+- Multi-asset ingest via [ccxt](https://github.com/ccxt/ccxt): any of the major spot exchanges
+  (Binance / Coinbase / Kraken / Bybit / OKX / …) can populate a Parquet bars file consumed by
+  the same GA / API / UI without code changes. `BTC/USDT`, `ETH/USDT`, `SOL/USDT` etc. are all
+  one `gentrade ingest` away.
 
 **What the current code does NOT yet claim:**
 
@@ -287,6 +297,11 @@ there could be a calculation error." The Phase 1 work is the audit of that claim
   produced yet — the random-entry baseline ships, but a single seed isn't a confidence interval.
 - The legacy `genetic.main` and `run_strategy` paths are still present and still drive the smoke
   test. They use the old no-friction, no-overlap-rule evaluator. Don't trust their numbers.
+- **Cross-asset robustness is not yet checked.** A strategy that wins on `BTC/USDT` should be
+  re-evaluated on `ETH/USDT`, `SOL/USDT` etc. — if it falls apart it was a curve-fit. Phase 5
+  session 2 ships this.
+- Equities (`SPY` etc.) are not supported yet; ccxt is crypto-only. yfinance support with
+  market-hours and survivorship-bias awareness is also Phase 5 session 2.
 - No paper trading. No live trading. No risk module.
 
 If you point money at this code in its current state, that's on you.
