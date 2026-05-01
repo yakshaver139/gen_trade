@@ -43,6 +43,7 @@ from gentrade.api.schemas import (
     RunDetailOut,
     RunSummaryOut,
     StrategyOut,
+    TradeOut,
     WindowOut,
 )
 from gentrade.backtest import BacktestConfig
@@ -307,6 +308,16 @@ def create_app(
             config=bt_cfg,
             seed=run.seed,
         )
+        # Re-evaluate the chosen strategy on the test window to surface
+        # individual trades for the UI's equity / drawdown / scatter charts.
+        from gentrade.walk_forward import evaluate_strategy, slice_window
+
+        test_bars = slice_window(bars, *test)
+        test_trades_df = evaluate_strategy(test_bars, strategy, bt_cfg)
+        test_trades = [
+            _trade_out(row) for _, row in test_trades_df.iterrows()
+        ]
+
         return BacktestResponse(
             chosen_strategy_id=report.chosen_strategy_id,
             train_metrics=_metrics_out(report.train_metrics),
@@ -315,9 +326,26 @@ def create_app(
             buy_and_hold_test=_metrics_out(report.buy_and_hold_test),
             random_entry_test=_metrics_out(report.random_entry_test),
             overfitting_gap=report.overfitting_gap if not _isnan(report.overfitting_gap) else 0.0,
+            test_trades=test_trades,
         )
 
     return app
+
+
+def _trade_out(row) -> TradeOut:
+    """Map a row from `evaluate_strategy`'s trades frame into the response shape."""
+    target = row.get("target_price")
+    stop = row.get("stop_loss_price")
+    return TradeOut(
+        entry_time=pd.Timestamp(row["entry_time"]).to_pydatetime(),
+        entry_price=float(row["entry_price"]),
+        exit_time=pd.Timestamp(row["exit_time"]).to_pydatetime(),
+        exit_price=float(row["exit_price"]),
+        target_price=None if pd.isna(target) else float(target),
+        stop_loss_price=None if pd.isna(stop) else float(stop),
+        outcome=str(row["outcome"]),
+        **{"return": float(row["return"])},
+    )
 
 
 def _strategy_out(run_id: str, row: StrategyRow) -> StrategyOut:

@@ -62,6 +62,13 @@
           "test_metrics": {
             "$ref": "#/components/schemas/PerformanceMetricsOut"
           },
+          "test_trades": {
+            "items": {
+              "$ref": "#/components/schemas/TradeOut"
+            },
+            "title": "Test Trades",
+            "type": "array"
+          },
           "train_metrics": {
             "$ref": "#/components/schemas/PerformanceMetricsOut"
           },
@@ -639,6 +646,69 @@
           "parsed_query"
         ],
         "title": "StrategyOut",
+        "type": "object"
+      },
+      "TradeOut": {
+        "description": "A single trade from a window's evaluation, surfaced for UI charts.",
+        "properties": {
+          "entry_price": {
+            "title": "Entry Price",
+            "type": "number"
+          },
+          "entry_time": {
+            "format": "date-time",
+            "title": "Entry Time",
+            "type": "string"
+          },
+          "exit_price": {
+            "title": "Exit Price",
+            "type": "number"
+          },
+          "exit_time": {
+            "format": "date-time",
+            "title": "Exit Time",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "return": {
+            "title": "Return",
+            "type": "number"
+          },
+          "stop_loss_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stop Loss Price"
+          },
+          "target_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Price"
+          }
+        },
+        "required": [
+          "entry_time",
+          "entry_price",
+          "exit_time",
+          "exit_price",
+          "outcome",
+          "return"
+        ],
+        "title": "TradeOut",
         "type": "object"
       },
       "ValidationError": {

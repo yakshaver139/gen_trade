@@ -148,6 +148,20 @@ class BacktestRequest(BaseModel):
     strategy_id: str
 
 
+class TradeOut(BaseModel):
+    """A single trade from a window's evaluation, surfaced for UI charts."""
+
+    entry_time: datetime
+    entry_price: float
+    exit_time: datetime
+    exit_price: float
+    target_price: float | None = None
+    stop_loss_price: float | None = None
+    outcome: str
+    return_: float = Field(alias="return")
+    model_config = {"populate_by_name": True}
+
+
 class BacktestResponse(BaseModel):
     chosen_strategy_id: str
     train_metrics: PerformanceMetricsOut
@@ -156,6 +170,11 @@ class BacktestResponse(BaseModel):
     buy_and_hold_test: PerformanceMetricsOut
     random_entry_test: PerformanceMetricsOut
     overfitting_gap: float
+    # Per-trade detail for the test window so the UI can render equity
+    # curve, drawdown, and trade-scatter charts. Train/validation trades
+    # are intentionally not exposed yet — too easy to read them as the
+    # number to optimise against, which is the bug Phase 1 closed.
+    test_trades: list[TradeOut] = Field(default_factory=list)
 
 
 class AssetOut(BaseModel):

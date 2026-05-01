@@ -328,6 +328,14 @@ def test_post_backtest_reruns_saved_strategy(client):
     assert bt["chosen_strategy_id"] == chosen_id
     assert "test_metrics" in bt
     assert "buy_and_hold_test" in bt
+    # test_trades carries individual trade records for the UI's charts
+    assert "test_trades" in bt
+    assert isinstance(bt["test_trades"], list)
+    if bt["test_trades"]:
+        first = bt["test_trades"][0]
+        for k in ("entry_time", "entry_price", "exit_time", "exit_price",
+                  "outcome", "return"):
+            assert k in first
 
 
 def test_post_backtest_unknown_strategy_returns_404(client):

@@ -203,6 +203,35 @@ Tips:
   `uv run python -m gentrade.api.export_openapi > openapi.json` and review the diff —
   the snapshot is asserted against by `tests/test_api.py`.
 
+## UI
+
+A Streamlit frontend lives in `gentrade/ui/`. It talks to the API over HTTP — start
+the API (`./scripts/dev_server.sh`) first, then the UI:
+
+```sh
+# Terminal 1 — API. Note the printed api key.
+./scripts/dev_server.sh
+
+# Terminal 2 — UI, with the API key from terminal 1.
+GENTRADE_API_KEY=<paste_from_terminal_1> ./scripts/dev_ui.sh
+# UI on http://127.0.0.1:8501
+```
+
+Pages (left sidebar):
+
+- **Runs** — list of persisted runs, status + headline metrics
+- **New Run** — form that POSTs `/runs` (asset, population size, generations, seed,
+  selection pressure, costs)
+- **Run detail** — fitness curves (train max + median, validation max), terminal
+  metrics, manifest. Paste a run id at the top
+- **Strategy detail** — chromosome + parsed pandas query, equity curve, drawdown,
+  per-trade scatter. Both run id and strategy id required (the Run detail page
+  prints them ready to copy)
+
+Auto-refresh is intentionally not wired in v1 — every page has a **Refresh** button.
+For a longer-running run, click Refresh every few seconds; the per-generation curve
+is the live progress signal.
+
 ## Docker
 
 `docker build -t gen-trade .`
