@@ -2,6 +2,11 @@
 
 Algorithmic trading strategy generation for crypto assets using a genetic algorithm.
 
+**Quickstart**: `uv sync && ./scripts/dev_server.sh` (terminal 1) →
+`GENTRADE_API_KEY=<from-terminal-1> ./scripts/dev_ui.sh` (terminal 2) →
+browse http://127.0.0.1:8501. No Binance credentials needed; the dev path
+runs on a deterministic synthetic dataset.
+
 ## Background
 
 This was a dissertation project undertaken as part of the [Software Engineering Master MSc program at the University of Oxford](https://www.cs.ox.ac.uk/softeng/programme/index.html), as such it should be considered an academic excercise only and is not recommended for actual trading! The project received a mark of 68%, which is a high merit (distinction = 70%).
@@ -41,78 +46,59 @@ with greater parallelism. Additionally, the underlying Python codebase works as 
 dalone Python package and embeds many of the interesting implementation challenges such
 as multiprocessing, modularity and extensibility.
 
-# Usage
+## Usage
 
 This project uses [`uv`](https://docs.astral.sh/uv/) and Python 3.11.
 
 ```sh
-# 1. install
+# install
 uv sync
 
-# 2. run the smoke test (no Binance, no S3 — synthetic data)
+# smoke test (synthetic data, no network, no API key needed)
 uv run python -m gentrade.smoke
 
-# 3. download real data (requires BINANCE_API and BINANCE_SECRET env vars)
+# real data — needs BINANCE_API + BINANCE_SECRET env vars
 uv run python -m gentrade.binance_download
-
-# 4. preprocess (adds trend_direction column)
-uv run python -m gentrade.ta_trends
-
-# 5. run the genetic algorithm
-uv run python -m gentrade.genetic --write_local=True --generations=10 --population_size=100 --fitness_function=p
+uv run python -m gentrade.ta_trends   # adds trend_direction column
 ```
 
-To run on previously-generated strategies:
-
-```sh
-uv run python -m gentrade.genetic --generations=1 --strategies_path=best_strategy.json --output_path=results.csv
-```
+There are two ways to drive a run after that: the **CLI** for one-off
+runs, or the **API + UI** for a hands-off, browse-able experience.
 
 ## CLI
 
-Command line interface menu for
-genetic.py
+The `gentrade` console script (defined in `pyproject.toml`) wraps the
+GA orchestrator with persistent runs and resumable state.
 
+```sh
+# start a fresh run; persists incrementally to sqlite:///gentrade.db by default
+gentrade run --data ./data/BTCUSDC_indicators.csv \
+             --strategies ./signals/initial_population.json \
+             --population-size 50 --generations 100 --seed 42
+
+# list persisted runs (newest first)
+gentrade list
+
+# print headline metrics + per-generation curves for one run
+gentrade show <run_id>
+
+# resume an in-progress run after a crash / Ctrl-C
+gentrade resume <run_id> --data ./data/BTCUSDC_indicators.csv
 ```
-poetry run python genetic.py --help
-usage: Main genetic algorithm. [-h] [--population_size POPULATION_SIZE]
-[--max_indicators MAX_INDICATORS]
-[--max_same_class MAX_SAME_CLASS]
-[--write_s3 WRITE_S3]
-[--write_local WRITE_LOCAL]
-[--s3_bucket S3_BUCKET]
-[--generations GENERATIONS]
-[--serial_debug SERIAL_DEBUG]
-[--strategies_path STRATEGIES_PATH]
-[--fitness_function FITNESS_FUNCTION]
-[--output_path OUTPUT_PATH]
-[--incremental_saves INCREMENTAL_SAVES]
-options:
--h, --help show this help message and exit
---population_size POPULATION_SIZE
-number of strategies to generate
---max_indicators MAX_INDICATORS
-max number of indicators in a strategy
---max_same_class MAX_SAME_CLASS
-max number of same class indicators in a strategy
---write_s3 WRITE_S3 exports data to s3.
---write_local WRITE_LOCAL
-exports data to local FS.
---s3_bucket S3_BUCKET
-bucket name to which data is written.
---generations GENERATIONS
-N generations to run.
---serial_debug SERIAL_DEBUG
-run without async Future - for debugging
---strategies_path STRATEGIES_PATH
-load strategies from this path rather than generating on the fly
---fitness_function FITNESS_FUNCTION
-fitness function use (h=ha_and_moon, o=original, p=profit)
---output_path OUTPUT_PATH
-path to save outputs
---incremental_saves INCREMENTAL_SAVES
-when true, saves the output for every 10 strategies tested
-```
+
+Behaviour worth knowing:
+
+- Every generation is checkpointed (snapshot + RNG state) before the
+  next one starts. A killed run resumes byte-equivalently — the
+  determinism test in `tests/test_persistence.py` pins this.
+- `gentrade run` refuses dirty git trees by default. Pass `--allow-dirty`
+  to override; the run won't be byte-reproducible from its `code_sha`.
+- 60/20/20 chronological train/validation/test split by default.
+- All flags: `gentrade run --help` etc.
+
+For the legacy `genetic.py` CLI (no friction model, no walk-forward
+windowing), see `gentrade/genetic.py`. It still drives the smoke test
+but its numbers should not be trusted.
 
 ## API server
 
@@ -295,5 +281,7 @@ there could be a calculation error." The Phase 1 work is the audit of that claim
 
 If you point money at this code in its current state, that's on you.
 
-See [`PLAN.md`](PLAN.md) for the phased plan. Phases 0 (revival) and 1 (modelling rigor) are
-complete; Phase 2 (persistence + job model) is in progress.
+See [`PLAN.md`](PLAN.md) for the phased plan. Phases 0 (revival), 1 (modelling rigor),
+2 (persistence + job model), 3 (FastAPI + auth + security review) and 4 (Streamlit UI)
+are complete. Phase 5 (multi-asset / `ccxt`) and Phase 6 (paper + live trading, gated)
+are not yet started.
