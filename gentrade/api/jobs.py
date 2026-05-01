@@ -31,6 +31,7 @@ from gentrade.api import assets as asset_registry
 from gentrade.api.schemas import CreateRunRequest
 from gentrade.backtest import BacktestConfig
 from gentrade.ga import GAConfig, run_ga
+from gentrade.ingest import load_bars as _load_bars
 from gentrade.manifest import compute_data_hash
 from gentrade.persistence import RunRow, start_persisted_run
 
@@ -98,18 +99,6 @@ def _generate_strategies(population_size: int, seed: int) -> list[dict]:
 
     random.seed(seed)
     return gen_main(population_size=population_size)
-
-
-def _load_bars(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if "open_ts" not in df.columns:
-        raise ValueError(f"{path}: missing required 'open_ts' column")
-    ts = df["open_ts"]
-    if pd.api.types.is_numeric_dtype(ts):
-        df["open_ts"] = pd.to_datetime(ts, unit="ms", utc=True)
-    else:
-        df["open_ts"] = pd.to_datetime(ts, utc=True)
-    return df
 
 
 def prepare_run(

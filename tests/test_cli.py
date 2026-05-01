@@ -166,6 +166,97 @@ def test_unknown_command_prints_help_and_returns_nonzero(tmp_path):
         main(["wat"])
 
 
+def test_ingest_downloads_and_writes_parquet(tmp_path, monkeypatch):
+    """`gentrade ingest` writes a Parquet file with OHLCV + indicator columns."""
+
+    from gentrade.ingest import TIMEFRAMES
+
+    bar_ms = TIMEFRAMES["15m"]
+    fake_bars = [
+        [1_640_995_200_000 + i * bar_ms, 100 + i * 0.1, 101 + i * 0.1,
+         99 + i * 0.1, 100.5 + i * 0.1, 5.0]
+        for i in range(200)
+    ]
+
+    class FakeExchange:
+        rateLimit = 0  # noqa: N815 — ccxt's name
+
+        def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+            return list(fake_bars)
+
+    # Patch the default exchange factory so the CLI doesn't try to hit Binance.
+    from gentrade import ingest
+
+    monkeypatch.setattr(
+        ingest, "_default_exchange_factory", lambda exchange_id: lambda: FakeExchange()
+    )
+
+    out_path = tmp_path / "BTCUSDT-15m.parquet"
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main([
+            "ingest",
+            "--exchange", "binance",
+            "--asset", "BTC/USDT",
+            "--interval", "15m",
+            "--since", "2022-01-01",
+            "--out", str(out_path),
+        ])
+    assert rc == 0
+    assert out_path.exists()
+    out_text = buf.getvalue()
+    # The CLI prints a registry snippet ready to paste.
+    assert "BTCUSDT-15m" in out_text
+    assert "binance" in out_text
+
+    # Round-trip check: file is loadable via the standard loader.
+    from gentrade.ingest import load_bars
+
+    df = load_bars(out_path)
+    assert "open" in df.columns
+    assert any(c.startswith("momentum_") for c in df.columns)
+
+
+def test_ingest_no_indicators_writes_ohlcv_only(tmp_path, monkeypatch):
+
+    from gentrade.ingest import TIMEFRAMES
+
+    bar_ms = TIMEFRAMES["15m"]
+    fake_bars = [
+        [1_640_995_200_000 + i * bar_ms, 100, 101, 99, 100.5, 5.0]
+        for i in range(50)
+    ]
+
+    class FakeExchange:
+        rateLimit = 0  # noqa: N815
+
+        def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None):
+            return list(fake_bars)
+
+    from gentrade import ingest
+
+    monkeypatch.setattr(
+        ingest, "_default_exchange_factory", lambda exchange_id: lambda: FakeExchange()
+    )
+
+    out_path = tmp_path / "raw.parquet"
+    rc = main([
+        "ingest",
+        "--exchange", "binance",
+        "--asset", "BTC/USDT",
+        "--interval", "15m",
+        "--since", "2022-01-01",
+        "--out", str(out_path),
+        "--no-indicators",
+    ])
+    assert rc == 0
+
+    from gentrade.ingest import load_bars
+
+    df = load_bars(out_path)
+    assert list(df.columns) == ["open_ts", "open", "high", "low", "close", "volume"]
+
+
 def test_show_prints_headline_metrics_for_a_run(tmp_path):
     bars_csv = _write_bars_csv(tmp_path / "bars.csv")
     strats_json = _write_strategies_json(tmp_path / "strats.json")

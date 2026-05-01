@@ -68,11 +68,17 @@ runs, or the **API + UI** for a hands-off, browse-able experience.
 ## CLI
 
 The `gentrade` console script (defined in `pyproject.toml`) wraps the
-GA orchestrator with persistent runs and resumable state.
+GA orchestrator with persistent runs, resumable state, and a multi-asset
+ingest pipeline.
 
 ```sh
+# download OHLCV via ccxt + compute TA indicators + save as Parquet
+gentrade ingest --exchange binance --asset BTC/USDT --interval 15m \
+                --since 2022-01-01 --out ./data/BTCUSDT-15m.parquet
+# (prints a ready-to-paste assets.json snippet)
+
 # start a fresh run; persists incrementally to sqlite:///gentrade.db by default
-gentrade run --data ./data/BTCUSDC_indicators.csv \
+gentrade run --data ./data/BTCUSDT-15m.parquet \
              --strategies ./signals/initial_population.json \
              --population-size 50 --generations 100 --seed 42
 
@@ -83,8 +89,12 @@ gentrade list
 gentrade show <run_id>
 
 # resume an in-progress run after a crash / Ctrl-C
-gentrade resume <run_id> --data ./data/BTCUSDC_indicators.csv
+gentrade resume <run_id> --data ./data/BTCUSDT-15m.parquet
 ```
+
+`gentrade ingest` works against any [ccxt](https://github.com/ccxt/ccxt)-supported
+exchange — Binance, Coinbase, Kraken, Bybit, OKX, etc. Both CSV and Parquet
+inputs are accepted by `--data`; Parquet is much faster for the inner loop.
 
 Behaviour worth knowing:
 
@@ -282,6 +292,7 @@ there could be a calculation error." The Phase 1 work is the audit of that claim
 If you point money at this code in its current state, that's on you.
 
 See [`PLAN.md`](PLAN.md) for the phased plan. Phases 0 (revival), 1 (modelling rigor),
-2 (persistence + job model), 3 (FastAPI + auth + security review) and 4 (Streamlit UI)
-are complete. Phase 5 (multi-asset / `ccxt`) and Phase 6 (paper + live trading, gated)
-are not yet started.
+2 (persistence + job model), 3 (FastAPI + auth + security review), 4 (Streamlit UI),
+and 5 (multi-asset ingest via ccxt + Parquet) are complete. Phase 5 follow-ups
+(per-asset thresholds, cross-asset robustness, yfinance for equities) and Phase 6
+(paper + live trading, gated) are not yet started.

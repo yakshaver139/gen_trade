@@ -49,6 +49,7 @@ from gentrade.api.schemas import (
     WindowOut,
 )
 from gentrade.backtest import BacktestConfig
+from gentrade.ingest import load_bars as _load_bars_for_backtest
 from gentrade.load_strategy import load_from_object_parenthesised
 from gentrade.metrics import PerformanceMetrics
 from gentrade.persistence import (
@@ -435,16 +436,6 @@ def _strategy_out(run_id: str, row: StrategyRow) -> StrategyOut:
         conjunctions=conjunctions,
         parsed_query=parsed,
     )
-
-
-def _load_bars_for_backtest(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    ts = df["open_ts"]
-    if pd.api.types.is_numeric_dtype(ts):
-        df["open_ts"] = pd.to_datetime(ts, unit="ms", utc=True)
-    else:
-        df["open_ts"] = pd.to_datetime(ts, utc=True)
-    return df
 
 
 def _isnan(x: float) -> bool:

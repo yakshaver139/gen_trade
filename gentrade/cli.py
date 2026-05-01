@@ -1,18 +1,20 @@
-"""Gentrade CLI: run, list, resume.
+"""Gentrade CLI: ingest, run, list, show, resume.
 
 Subcommands:
 
-  gentrade run --data BARS.csv --strategies STRATS.json
-               --population-size N --generations N --seed S
-               [--db-url URL] [--allow-dirty] [--stop-after-generation K]
-  gentrade list  [--db-url URL]
-  gentrade resume RUN_ID --data BARS.csv [--db-url URL]
+  gentrade ingest --exchange binance --asset BTC/USDT --interval 15m
+                  --since 2022-01-01 [--until ...] [--out PATH]
+  gentrade run    --data BARS.{csv,parquet} --strategies STRATS.json
+                  --population-size N --generations N --seed S
+                  [--db-url URL] [--allow-dirty] [--stop-after-generation K]
+  gentrade list   [--db-url URL]
+  gentrade show   RUN_ID [--db-url URL]
+  gentrade resume RUN_ID --data BARS.{csv,parquet} [--db-url URL]
 
 The default database is ``sqlite:///gentrade.db`` (overridable via the
-``GENTRADE_DB_URL`` env var or ``--db-url`` on each command). Bars CSV is
-loaded with pandas and must carry at least ``open_ts``, ``open``, ``high``,
-``low``, ``close``; ``volume`` is optional but read if present. The
-``open_ts`` column may be either an ISO 8601 string or epoch milliseconds.
+``GENTRADE_DB_URL`` env var or ``--db-url`` on each command). Bars files
+are loaded by extension — ``.parquet`` (the ingest output) or ``.csv``
+(legacy). CSV ``open_ts`` may be ISO 8601 or epoch milliseconds.
 
 The CLI does not yet generate strategies on the fly; pass a JSON file
 listing the initial population. A future revision will compose with
@@ -30,6 +32,14 @@ import pandas as pd
 
 from gentrade.backtest import BacktestConfig
 from gentrade.ga import GAConfig, run_ga
+from gentrade.ingest import (
+    compute_indicators,
+    fetch_ohlcv,
+    save_parquet,
+)
+from gentrade.ingest import (
+    load_bars as _load_bars,
+)
 from gentrade.manifest import compute_data_hash, current_git_sha
 from gentrade.persistence import (
     DEFAULT_DB_URL,
@@ -38,19 +48,6 @@ from gentrade.persistence import (
 )
 
 log = logging.getLogger(__name__)
-
-
-def _load_bars(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if "open_ts" not in df.columns:
-        raise ValueError(f"{path}: missing required 'open_ts' column")
-    # Accept either ISO strings or epoch ms.
-    ts = df["open_ts"]
-    if pd.api.types.is_numeric_dtype(ts):
-        df["open_ts"] = pd.to_datetime(ts, unit="ms", utc=True)
-    else:
-        df["open_ts"] = pd.to_datetime(ts, utc=True)
-    return df
 
 
 def _split_windows(
@@ -127,6 +124,50 @@ def cmd_run(args: argparse.Namespace) -> int:
     run_id = rows[0]["id"]  # newest first
     chosen = result.backtest_report.chosen_strategy_id or "(in progress)"
     print(f"run_id={run_id} status={rows[0]['status']} chosen_strategy={chosen}")
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    """Download OHLCV from a ccxt exchange + add TA indicators + save Parquet."""
+    print(
+        f"fetching {args.asset} on {args.exchange} ({args.interval}) "
+        f"from {args.since}..."
+    )
+    df = fetch_ohlcv(
+        exchange_id=args.exchange,
+        symbol=args.asset,
+        interval=args.interval,
+        since=args.since,
+        until=args.until,
+    )
+    if len(df) == 0:
+        print("exchange returned no bars; check symbol/interval/since.", file=sys.stderr)
+        return 6
+    print(f"  fetched {len(df):,} bars; computing indicators...")
+    if not args.no_indicators:
+        df = compute_indicators(df)
+    save_parquet(df, args.out)
+    print(f"  wrote {args.out}")
+
+    # Print a copy-paste-ready assets.json snippet so the operator can
+    # register the file with the API.
+    asset_id = (
+        args.asset_id
+        or f"{args.asset.replace('/', '').replace(':', '_')}-{args.interval}"
+    )
+    print()
+    print("Add this to your assets.json:")
+    print(
+        json.dumps(
+            {
+                "asset": asset_id,
+                "exchange": args.exchange,
+                "interval": args.interval,
+                "path": str(args.out),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -222,8 +263,30 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gentrade")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
+    ingest_p = sub.add_parser(
+        "ingest",
+        help="download OHLCV via ccxt, compute indicators, save as Parquet",
+    )
+    ingest_p.add_argument("--exchange", required=True,
+                          help="ccxt exchange id (e.g. binance, coinbase, kraken)")
+    ingest_p.add_argument("--asset", required=True,
+                          help="ccxt symbol (e.g. BTC/USDT, ETH/USD)")
+    ingest_p.add_argument("--interval", default="15m",
+                          help="bar interval (1m / 5m / 15m / 30m / 1h / 4h / 1d)")
+    ingest_p.add_argument("--since", required=True,
+                          help="start date / time (ISO 8601 or epoch ms)")
+    ingest_p.add_argument("--until", default=None,
+                          help="end date / time (default: now)")
+    ingest_p.add_argument("--out", required=True,
+                          help="output Parquet path")
+    ingest_p.add_argument("--asset-id", default=None,
+                          help="asset name for the registry snippet (default: derived)")
+    ingest_p.add_argument("--no-indicators", action="store_true",
+                          help="skip TA indicator computation (just OHLCV)")
+    ingest_p.set_defaults(func=cmd_ingest)
+
     run_p = sub.add_parser("run", help="start a new GA run")
-    run_p.add_argument("--data", required=True, help="path to bars CSV")
+    run_p.add_argument("--data", required=True, help="path to bars CSV or Parquet")
     run_p.add_argument("--strategies", required=True, help="path to initial strategies JSON")
     run_p.add_argument("--population-size", type=int, default=10)
     run_p.add_argument("--generations", type=int, default=50)
