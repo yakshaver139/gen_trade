@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
+from gentrade.ui.format import fmt
 
 st.set_page_config(page_title="gentrade — strategy detail", layout="wide")
 st.title("Strategy detail")
@@ -35,7 +36,7 @@ except ApiError as e:
 
 st.subheader("Chromosome")
 st.metric("rank", strat["rank"])
-st.metric("fitness (train)", f"{strat['fitness']:+.4f}" if strat["fitness"] is not None else "—")
+st.metric("fitness (train)", fmt(strat.get("fitness"), "+.4f"))
 st.markdown("**Parsed pandas query**")
 st.code(strat["parsed_query"], language="python")
 
@@ -50,13 +51,13 @@ except ApiError as e:
     st.error(str(e))
     st.stop()
 
-m = bt["test_metrics"]
+m = bt["test_metrics"] or {}
 metric_cols = st.columns(5)
-metric_cols[0].metric("trades", m["n_trades"])
-metric_cols[1].metric("win rate", f"{m['win_rate']:.2%}")
-metric_cols[2].metric("expectancy", f"{m['expectancy']:+.4f}")
-metric_cols[3].metric("sharpe", f"{m['sharpe']:+.2f}")
-metric_cols[4].metric("max DD", f"{m['max_drawdown']:+.4f}")
+metric_cols[0].metric("trades", m.get("n_trades", 0))
+metric_cols[1].metric("win rate", fmt(m.get("win_rate"), ".2%"))
+metric_cols[2].metric("expectancy", fmt(m.get("expectancy"), "+.4f"))
+metric_cols[3].metric("sharpe", fmt(m.get("sharpe"), "+.2f"))
+metric_cols[4].metric("max DD", fmt(m.get("max_drawdown"), "+.4f"))
 
 trades = bt.get("test_trades") or []
 if not trades:

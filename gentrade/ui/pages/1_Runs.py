@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
+from gentrade.ui.format import fmt
 
 st.set_page_config(page_title="gentrade — runs", layout="wide")
 st.title("Runs")
@@ -37,9 +38,7 @@ display_cols = [
     "overfitting_gap",
 ]
 df = df[[c for c in display_cols if c in df.columns]]
-df["overfitting_gap"] = df["overfitting_gap"].apply(
-    lambda x: f"{x:+.4f}" if x is not None else "—"
-)
+df["overfitting_gap"] = df["overfitting_gap"].apply(lambda x: fmt(x, "+.4f"))
 
 st.dataframe(df, use_container_width=True, hide_index=True)
 

@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
+from gentrade.ui.format import fmt
 
 st.set_page_config(page_title="gentrade — run detail", layout="wide")
 st.title("Run detail")
@@ -30,10 +31,7 @@ except ApiError as e:
 top = st.columns(4)
 top[0].metric("Status", run["status"])
 top[1].metric("Generations done", run["current_generation"])
-top[2].metric(
-    "Overfitting gap",
-    f"{run['overfitting_gap']:+.4f}" if run["overfitting_gap"] is not None else "—",
-)
+top[2].metric("Overfitting gap", fmt(run.get("overfitting_gap"), "+.4f"))
 top[3].metric("Chosen strategy", run["chosen_strategy_id"] or "—")
 
 with st.expander("manifest"):
@@ -100,10 +98,10 @@ if run["status"] == "reported":
         m = run.get(key) or {}
         with cols[i]:
             st.markdown(f"**{label}**")
-            st.metric("n_trades", m.get("n_trades", "—"))
-            st.metric("expectancy", f"{m.get('expectancy', 0):+.4f}")
-            st.metric("sharpe", f"{m.get('sharpe', 0):+.2f}")
-            st.metric("max_dd", f"{m.get('max_drawdown', 0):+.4f}")
+            st.metric("n_trades", m.get("n_trades") if m.get("n_trades") is not None else "—")
+            st.metric("expectancy", fmt(m.get("expectancy"), "+.4f"))
+            st.metric("sharpe", fmt(m.get("sharpe"), "+.2f"))
+            st.metric("max_dd", fmt(m.get("max_drawdown"), "+.4f"))
 
     chosen = run.get("chosen_strategy_id")
     if chosen:
