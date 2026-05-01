@@ -110,6 +110,25 @@ def test_evaluate_strategy_runs_query_and_emits_trades():
         assert curr_entry > prev_exit
 
 
+def test_evaluate_strategy_swallows_missing_column_errors():
+    """A strategy referencing columns the frame doesn't have → empty trades, no crash."""
+    bars = make_bars(20)
+    strategy = {
+        "id": "missing-col",
+        "indicators": [
+            {
+                "absolute": True,
+                "indicator": "momentum_does_not_exist",
+                "op": ">=",
+                "abs_value": 50,
+            }
+        ],
+        "conjunctions": [],
+    }
+    trades = evaluate_strategy(bars, strategy, CFG)
+    assert len(trades) == 0
+
+
 def test_evaluate_strategy_with_never_true_signal_returns_empty():
     bars = make_bars(20)
     strategy = {

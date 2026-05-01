@@ -70,11 +70,22 @@ def slice_window(
 def evaluate_strategy(
     bars: pd.DataFrame, strategy: dict, config: BacktestConfig
 ) -> pd.DataFrame:
-    """Build the entry signal from the strategy DSL and run the backtest."""
+    """Build the entry signal from the strategy DSL and run the backtest.
+
+    A strategy that references columns the bars frame doesn't have is
+    structurally invalid for this dataset (e.g. an indicator the GA
+    selected from the catalogue but the data ingest didn't produce).
+    Rather than crash the whole GA loop on one unevaluable child, we
+    short-circuit to an empty trade list — the strategy gets the
+    no-entries-floor fitness and selection naturally drops it.
+    """
     if bars.empty:
         return simulate_trades(bars, np.array([], dtype=bool), config)
     parsed = load_from_object_parenthesised(strategy)
-    matched = query_strategy(bars, query=parsed)
+    try:
+        matched = query_strategy(bars, query=parsed)
+    except Exception:
+        return simulate_trades(bars, np.zeros(len(bars), dtype=bool), config)
     matched_ts = set(matched["open_ts"].tolist())
     sig = bars["open_ts"].isin(matched_ts).to_numpy()
     return simulate_trades(bars, sig, config)

@@ -13,5 +13,6 @@ htmlcov/
 iac/.terraform/
 runs/
 data/
+.dev/
 *.db
 *.db-journal
