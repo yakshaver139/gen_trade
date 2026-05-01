@@ -1,6 +1,15 @@
 *.csv
+*.parquet
 .env
+.venv/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 .vscode/
-iac/.terraform/providers/registry.terraform.io/hashicorp/aws/*
+*.tfstate
+*.tfstate.*
+iac/.terraform/
+runs/
+data/

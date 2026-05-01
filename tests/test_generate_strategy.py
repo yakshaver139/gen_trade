@@ -1,37 +1,45 @@
-from unittest.mock import patch, Mock
-import generate_strategy
+from unittest.mock import patch
+
+from gentrade import generate_strategy
 
 
-class FakeIndicator():
-    def __init__(self, name='foo') -> None:
-        self.name = name
+def _ind(name: str, ind_type: str) -> dict:
+    return {
+        "indicator": name,
+        "type": ind_type,
+        "absolute": True,
+        "op": ">=",
+        "abs_value": 0.5,
+        "rel_value": None,
+    }
 
 
-def test_choose_indicator():
-    # use two datatypes to test the recursion
-    mockInd = Mock()
-    fakeInd = FakeIndicator
+def test_choose_indicator_respects_max_same_class():
+    momentum_a = _ind("a", "momentum")
+    momentum_b = _ind("b", "momentum")
+    trend_a = _ind("c", "trend")
 
-    indicators = [mockInd]
-    same_class_indicators = dict()
-    assert generate_strategy.choose_indicator(
-        indicators, 1, same_class_indicators) == mockInd
-
-    same_class_indicators[str(Mock)] = 1
-    indicators.extend([Mock(), fakeInd])
-    # We already got 1 Mock indicator so this should always return the FakeIndicator
-    assert generate_strategy.choose_indicator(
-        indicators, 1, same_class_indicators) == fakeInd
+    # already at the cap for momentum: must return the trend indicator.
+    indicators = [momentum_a, momentum_b, trend_a]
+    same_class = {"momentum": 2}
+    chosen = generate_strategy.choose_indicator(indicators, max_same_class=1, same_class_indicators=same_class)
+    assert chosen is trend_a
 
 
-@patch("generate_strategy.choose_num_indicators")
-@patch("generate_strategy.choose_indicator")
-def test_generate(choose_indicator, choose_num_indicators):
+@patch("gentrade.generate_strategy.choose_num_indicators")
+@patch("gentrade.generate_strategy.choose_indicator")
+def test_generate_returns_strategy_dict(choose_indicator, choose_num_indicators):
     choose_num_indicators.return_value = 3
-    indicators = ['ble', 'foo', 'bar', Mock(), Mock()]
-    conjunctions = ['AND']
-    # base_indicator gets popped off, hence slice from 1
-    choose_indicator.side_effect = indicators[1:]
+    base = _ind("base", "momentum")
+    second = _ind("second", "trend")
+    third = _ind("third", "volatility")
+    choose_indicator.side_effect = [second, third]
 
-    strategy = generate_strategy.generate('ble', indicators, conjunctions, 3)
-    assert strategy == ['ble', 'AND', 'foo', 'AND', 'bar']
+    strategy = generate_strategy.generate(
+        base, [base, second, third], conjunctions=["and"], max_indicators=3
+    )
+
+    assert strategy["indicators"] == [base, second, third]
+    assert len(strategy["conjunctions"]) == 2
+    assert strategy["conjunctions"][0] == "and"
+    assert "id" in strategy

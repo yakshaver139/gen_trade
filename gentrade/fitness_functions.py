@@ -1,13 +1,15 @@
+from collections.abc import Iterable
 from math import log
-from typing import Callable, Iterable, Tuple
+
 import pandas as pd
-from df_adapter import dfa
-from env import HIT, STOPPED
-from profit_calculator import calculate_simple_profit
-from async_caller import process_future_caller
+
+from gentrade.async_caller import process_future_caller
+from gentrade.df_adapter import dfa
+from gentrade.env import HIT
+from gentrade.profit_calculator import calculate_simple_profit
 
 
-def fitness_metadata(result: pd.DataFrame) -> Tuple:
+def fitness_metadata(result: pd.DataFrame) -> tuple[int, float, float]:
     try:
         n_trades = len(result)
         win_percent = (len(result.loc[result.result == HIT]) / n_trades)
@@ -37,7 +39,7 @@ def fitness_function_ha_and_moon(result: dfa.DataFrame) -> pd.DataFrame:
     g(r)i,j = log((pc(i, j) + k) / pc(i, j))
     """
     # handle recursive calls already made which already have fitness data
-    if "fitness" in result.keys():
+    if "fitness" in result:
         return result
 
     n_trades, win_percent, avg_gain = fitness_metadata(result)
@@ -55,13 +57,10 @@ def fitness_function_original(result: dfa.DataFrame) -> pd.DataFrame:
     Returns gain on account * performance coeff.
     """
     # handle recursive calls already made which already have fitness data
-    if "fitness" in result.keys():
+    if "fitness" in result:
         return result
     n_trades, win_percent, avg_gain = fitness_metadata(result)
-    if n_trades <= 1:
-        fitness = -1000
-    else:
-        fitness = avg_gain * (win_percent * n_trades)
+    fitness = -1000 if n_trades <= 1 else avg_gain * (win_percent * n_trades)
     return transform_fitness_results(result, n_trades, win_percent, avg_gain, fitness)
 
 

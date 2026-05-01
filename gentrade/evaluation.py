@@ -1,17 +1,19 @@
-import matplotlib.pyplot as plt
-import os
-import pandas as pd
-from numpy.polynomial.polynomial import polyfit
-import plotly.graph_objects as go
-from plotly.offline import iplot
+"""Post-hoc analysis. Optional dependency group: ``pip install gentrade[analysis]``."""
+
 import ast
-import numpy as np
-from genetic import load_trading_data
-from env import BUY_AMOUNT
-from word_cloud import WordCloud
+import os
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import plotly.graph_objects as go
+from wordcloud import WordCloud
+
+from gentrade.env import BUY_AMOUNT
+from gentrade.genetic import load_trading_data
+
 
 def plot_multiple(dfs):
-    _dfs = {"gen_{ix}": df for ix, df in enumerate(dfs)}
+    _dfs = {f"gen_{ix}": df for ix, df in enumerate(dfs)}
 
     # plot the data
     fig = go.Figure()

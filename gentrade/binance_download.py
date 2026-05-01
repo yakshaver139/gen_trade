@@ -1,14 +1,15 @@
-import sys
+import argparse
 import logging
 import os
-import argparse
-from typing import List
-import pandas as pd
+import sys
 from datetime import datetime
+
+import pandas as pd
+from binance.client import Client
 from ta import add_all_ta_features
 from ta.utils import dropna
-from binance.client import Client
-from ta_trends import trend_direction
+
+from gentrade.ta_trends import trend_direction
 
 DF_COLUMNS = [
     'open_ts', 'open', 'high', 'low', 'close', 'volume', 'close_ts', 'qav',
@@ -38,7 +39,7 @@ def prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def write_data(klines: List, csv_path: str) -> pd.DataFrame:
+def write_data(klines: list, csv_path: str) -> pd.DataFrame:
     # Drop some of the columns we're not interested in
     _klines = [k[:-3] for k in klines]
     df = pd.DataFrame(_klines)
