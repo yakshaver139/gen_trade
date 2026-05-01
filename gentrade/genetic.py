@@ -25,6 +25,7 @@ from gentrade.generate_strategy import (
 from gentrade.helpers import base_arg_parser, make_pandas_df, write_df_to_s3
 from gentrade.logger import get_logger
 from gentrade.run_strategy import run_strategy
+from gentrade.selection import DEFAULT_PRESSURE, compute_weights
 
 
 def load_df(path: str = "BTCUSDC_indicators.csv"):
@@ -120,15 +121,13 @@ def main(
     return ranked_results
 
 
-def apply_ranking(results) -> tuple[pd.DataFrame, dict]:
+def apply_ranking(
+    results, pressure: str = DEFAULT_PRESSURE
+) -> tuple[pd.DataFrame, dict]:
     df = pd.concat(results)
     df.sort_values(by="fitness", ascending=False, inplace=True)
-    n_items = len(df)
-    # NOTE: this formula evaluates to ``n_items + (1 / (i + 1))`` due to operator
-    # precedence — selection pressure is therefore close to uniform. This is a
-    # known bug, kept as-is in Phase 0 to preserve historic behaviour. Phase 1
-    # will replace with deliberate rank-weighted selection.
-    weights = {df.iloc[i].strategy["id"]: n_items + 1 / (i + 1) for i in range(n_items)}
+    df.reset_index(drop=True, inplace=True)
+    weights = compute_weights(df, pressure=pressure)
     return df, weights
 
 

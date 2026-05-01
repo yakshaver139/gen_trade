@@ -79,7 +79,22 @@ enum FitnessFunction {
     win_weighted            -- avg_gain * (win_percent * n_trades)
 }
 
-enum RunStatus { in_progress | completed }
+-- A run is `completed` once the GA loop has finished (final generation
+-- evaluated). It only becomes `reported` once the BacktestReport — which
+-- includes test-window metrics, baselines, and the per-generation
+-- in-sample-vs-validation curves — has been produced. The run isn't
+-- truly done until the test set has been touched exactly once.
+enum RunStatus { in_progress | completed | reported }
+
+-- How parents are sampled for breeding. `tournament` (default, K=3) is
+-- equivalent to picking K candidates uniformly and keeping the best;
+-- best-vs-median sampling ratio is ~4.4x for N=10, clearing the Phase 1
+-- "best ≥ 3× median" target. `rank_linear` weights each ranked parent by
+-- `N - i` — gentler pressure (~2x best/median); use when premature
+-- convergence is the worry. `fitness_proportional` weights by raw fitness;
+-- fragile against negative or differently-scaled fitness; experimentation
+-- only.
+enum SelectionPressure { rank_linear | tournament | fitness_proportional }
 
 ------------------------------------------------------------
 -- Value Types
@@ -110,6 +125,9 @@ value Signal {
 
 -- A single backtested trade attempt: entry at a bar, run for the trade
 -- window, classify by which threshold (target or stop) was reached first.
+-- Fees and slippage are recorded per-trade so that fitness functions and
+-- BacktestReport metrics can subtract realistic costs rather than treat
+-- every entry/exit as frictionless.
 value Trade {
     entry_time: Timestamp
     entry_price: Decimal
@@ -117,6 +135,54 @@ value Trade {
     stop_loss_price: Decimal
     outcome: TradeOutcome
     performance: Decimal
+    entry_fee: Decimal
+    exit_fee: Decimal
+    slippage: Decimal
+}
+
+-- A half-open chronological window. Used to carve a MarketHistory into
+-- train / validation / test segments for walk-forward backtesting.
+value TimeRange {
+    start: Timestamp
+    end: Timestamp
+}
+
+-- Diagnostic distribution of fitness across the strategies in one
+-- generation, computed both on the train window (drives selection) and
+-- on the validation window (NEVER feeds selection — used only to detect
+-- the in-sample / out-of-sample gap as the run progresses).
+-- `n_strategies_with_trades` counts strategies whose backtest produced
+-- at least one closed trade, distinguishing genuine fitness from the
+-- penalised "no_entries" floor.
+value GenerationMetrics {
+    max_fitness: Decimal
+    median_fitness: Decimal
+    mean_fitness: Decimal
+    n_strategies_with_trades: Integer
+}
+
+-- A snapshot pairing one generation's in-sample and validation metrics,
+-- used by BacktestReport to plot the divergence curve over the run.
+value GenerationMetricsSnapshot {
+    generation_number: Integer
+    in_sample: GenerationMetrics
+    validation: GenerationMetrics
+}
+
+-- A standard bundle of P&L and risk-adjusted return metrics computed
+-- over a window's worth of trades. Used by BacktestReport for the
+-- candidate strategy on each window and for the buy-and-hold and
+-- random-entry baselines.
+value PerformanceMetrics {
+    sharpe: Decimal
+    sortino: Decimal
+    calmar: Decimal
+    max_drawdown: Decimal
+    profit_factor: Decimal
+    win_rate: Decimal
+    expectancy: Decimal
+    avg_trade_duration: Duration
+    n_trades: Integer
 }
 
 ------------------------------------------------------------
@@ -125,29 +191,66 @@ value Trade {
 
 -- One execution of the genetic algorithm: a starting population evolves
 -- over a fixed number of generations against a single MarketHistory using
--- a chosen fitness function. Producing the ranked final population is the
--- goal of a Run.
+-- a chosen fitness function. Producing the ranked final population — and
+-- a final BacktestReport over a held-out test window — is the goal of a
+-- Run.
+--
+-- The market is partitioned into three non-overlapping, chronologically
+-- ordered windows. Selection only ever sees the train window. The
+-- validation window is touched every generation but never feeds
+-- selection (it surfaces overfitting). The test window is touched
+-- exactly once, at run completion, to produce the BacktestReport.
+--
+-- The reproducibility fields (seed, code_sha, data_hash, config_snapshot)
+-- are captured at run start so that any historical run can be replayed
+-- byte-for-byte from the persisted record alone.
 entity Run {
     started_at: Timestamp
     finished_at: Timestamp?
     market: MarketHistory
     fitness_function: FitnessFunction
+    selection_pressure: SelectionPressure
     population_size: Integer
     max_generations: Integer
     status: RunStatus
 
+    train_window: TimeRange
+    validation_window: TimeRange
+    test_window: TimeRange
+
+    seed: Integer
+    code_sha: String
+    data_hash: String
+    config_snapshot: String
+
     generations: Generation with run = this
+    backtest_report: BacktestReport with run = this
 
     current_generation: generations where status != bred
     is_complete: generations.count >= max_generations
+
+    invariant WindowsAreOrdered {
+        train_window.end <= validation_window.start
+        and validation_window.end <= test_window.start
+    }
 }
 
 -- A single iteration of the GA loop. Owns its population of strategies and,
 -- once evaluated, ranks them so the next Generation can be bred.
+--
+-- Two parallel GenerationMetrics are recorded once the generation is
+-- evaluated: in_sample_metrics summarises fitness on the train window
+-- (the same numbers selection uses) and validation_metrics summarises
+-- fitness on the validation window. Validation metrics NEVER feed
+-- selection — they exist only so the in-sample-vs-validation divergence
+-- can be tracked across generations and surfaced in the BacktestReport.
 entity Generation {
     run: Run
     number: Integer
     status: pending_evaluation | evaluated | bred
+
+    in_sample_metrics: GenerationMetrics?
+    validation_metrics: GenerationMetrics?
 
     strategies: Strategy with generation = this
     fitness_reports: FitnessReport with generation = this
@@ -186,7 +289,11 @@ entity Strategy {
 
 -- The result of running one Strategy over the entire MarketHistory: every
 -- entry point produces a Trade, classified by what happened in the
--- following trade window.
+-- following trade window. At most one trade is open at a time on a given
+-- strategy: signal bars that fall inside an already-open trade's window
+-- are not entered (see NoOverlappingTrades). This replaces the original
+-- "every entry independent" behaviour, which double-counted exposure
+-- and inflated fitness on signals that fired in clusters.
 entity Backtest {
     strategy: Strategy
     trades: List<Trade>
@@ -194,6 +301,14 @@ entity Backtest {
 
     n_entries: trades.count
     is_too_noisy: trade_percent >= config.entry_cutoff_percent
+
+    invariant NoOverlappingTrades {
+        for a in trades:
+            for b in trades:
+                a != b implies
+                    not (a.entry_time < b.entry_time + config.trade_window
+                         and b.entry_time < a.entry_time + config.trade_window)
+    }
 }
 
 -- Per-strategy summary used for selection. Produced by applying the run's
@@ -206,6 +321,32 @@ entity FitnessReport {
     win_percent: Decimal
     avg_gain: Decimal
     fitness: Decimal
+}
+
+-- The single, terminal artefact of a Run. Produced exactly once when the
+-- final generation has been evaluated, and only then is the test window
+-- touched. Contains the chosen strategy's performance on every window
+-- (train, validation, test) plus two baselines on the test window
+-- (buy-and-hold, random-entry) so the reader can judge whether the
+-- strategy is doing meaningful work or simply tracking the asset.
+--
+-- `overfitting_gap` is the final-generation in-sample-vs-validation
+-- divergence: (train_max_fitness - validation_max_fitness)
+-- divided by the absolute value of train_max_fitness. Large positive
+-- values indicate the GA fit the train window without generalising.
+--
+-- `per_generation` carries the same divergence over time so the curve
+-- can be plotted and the moment of divergence inspected.
+entity BacktestReport {
+    run: Run
+    chosen_strategy: Strategy
+    train_metrics: PerformanceMetrics
+    validation_metrics: PerformanceMetrics
+    test_metrics: PerformanceMetrics
+    buy_and_hold_test: PerformanceMetrics
+    random_entry_test: PerformanceMetrics
+    overfitting_gap: Decimal
+    per_generation: List<GenerationMetricsSnapshot>
 }
 
 ------------------------------------------------------------
@@ -243,27 +384,69 @@ config {
 
     -- Notional per-trade capital used by the simple-profit fitness.
     buy_amount: Decimal = 1000
+
+    -- Selection pressure for parent sampling. tournament is the default
+    -- because it clears the Phase 1 "best ≥ 3× median" sampling target;
+    -- see the BreedChildStrategy guidance for the per-scheme formulae.
+    selection_pressure: SelectionPressure = tournament
+
+    -- Per-side transaction cost in basis points. 10 bps matches Binance
+    -- spot taker fees for the public tier; venues with maker rebates or
+    -- VIP tiers should override per-deployment.
+    taker_fee_bps: Decimal = 10
+
+    -- Per-side slippage in basis points. 1 bp is a defensible floor for
+    -- liquid majors on 15-minute bars; thin alts and faster bars should
+    -- override upward.
+    slippage_bps: Decimal = 1
 }
 
 ------------------------------------------------------------
 -- Rules
 ------------------------------------------------------------
 
+-- Start a new run. The operator supplies the windows, fitness function,
+-- selection pressure, GA shape, and the reproducibility metadata
+-- (seed + code_sha + data_hash + config_snapshot) that lets a run be
+-- replayed byte-for-byte from the persisted record.
 rule StartRun {
-    when: OperatorStartsRun(market, fitness_function, population_size, max_generations)
+    when: OperatorStartsRun(
+        market,
+        fitness_function,
+        selection_pressure,
+        population_size,
+        max_generations,
+        train_window,
+        validation_window,
+        test_window,
+        seed,
+        code_sha,
+        data_hash,
+        config_snapshot
+    )
 
     requires: population_size > 0
     requires: max_generations > 0
     requires: population_size >= config.elitism_count
+    requires: train_window.end <= validation_window.start
+    requires: validation_window.end <= test_window.start
 
     ensures:
         let run = Run.created(
             started_at: now,
             market: market,
             fitness_function: fitness_function,
+            selection_pressure: selection_pressure,
             population_size: population_size,
             max_generations: max_generations,
-            status: in_progress
+            status: in_progress,
+            train_window: train_window,
+            validation_window: validation_window,
+            test_window: test_window,
+            seed: seed,
+            code_sha: code_sha,
+            data_hash: data_hash,
+            config_snapshot: config_snapshot
         )
         let gen = Generation.created(
             run: run,
@@ -300,18 +483,116 @@ rule GenerateRandomStrategy {
 
 -- Once every Strategy in the current Generation has been backtested and
 -- scored, the generation is ready to breed the next.
+--
+-- This is also where the per-generation diagnostics are recorded:
+-- in_sample_metrics aggregates the fitness reports the GA just produced
+-- (computed on the train window — these are the same numbers that
+-- selection consumes) and validation_metrics independently re-evaluates
+-- the same strategies on the validation window. Validation metrics
+-- NEVER feed selection — they exist only so the in-sample-vs-validation
+-- divergence can be tracked across generations.
+--
+-- Transitioning the run's status to `completed` is the trigger for
+-- ProduceBacktestReport, which then touches the test window for the
+-- first and only time and persists the BacktestReport before the run
+-- moves on to `reported`.
 rule EvaluateGeneration {
     when: gen: Generation.is_evaluated
 
     requires: gen.status = pending_evaluation
 
     ensures: gen.status = evaluated
+    ensures: gen.in_sample_metrics = summarise_fitness(gen.fitness_reports)
+    ensures: gen.validation_metrics = evaluate_on_validation_window(
+        gen.strategies, gen.run.market, gen.run.validation_window
+    )
     ensures:
         if gen.number >= gen.run.max_generations:
             gen.run.status = completed
             gen.run.finished_at = now
         else:
             BreedNextGeneration(generation: gen)
+
+    @guidance
+        -- summarise_fitness(reports): aggregate the in-sample
+        -- FitnessReports into a GenerationMetrics value. max/median/mean
+        -- are over r.fitness; n_strategies_with_trades counts reports
+        -- with n_trades > 0 (i.e. excludes the no_entries floor).
+        --
+        -- evaluate_on_validation_window(strategies, market, window):
+        -- re-run each strategy's signal expression over the bars whose
+        -- open_time falls inside the validation window, simulate trades
+        -- with the live cost model, score with the run's fitness
+        -- function, and aggregate into a GenerationMetrics value.
+        -- The resulting numbers are diagnostic only and must not be
+        -- read by any selection or breeding step.
+}
+
+-- Produce the terminal BacktestReport for a run. Fires exactly once,
+-- when the GA loop has finished its final generation and the run
+-- transitions from in_progress to completed. This is the only point at
+-- which the test window is touched: the chosen strategy is re-backtested
+-- on the validation and test windows, two baselines (buy-and-hold and
+-- random-entry over the same exposure) are computed on the test window,
+-- and a per-generation snapshot of in-sample-vs-validation metrics is
+-- assembled from the generations that have already accumulated them.
+--
+-- The run is not truly done until this rule has persisted its report;
+-- only then does the run transition to `reported`.
+rule ProduceBacktestReport {
+    when: run: Run.status transitions_to completed
+
+    let final_generation = run.generations
+                              .sort_by(g => g.number, descending)
+                              .first
+    let chosen = final_generation.fitness_reports
+                   .sort_by(r => r.fitness, descending)
+                   .first.strategy
+
+    let train_max = final_generation.in_sample_metrics.max_fitness
+    let val_max = final_generation.validation_metrics.max_fitness
+    let gap = (train_max - val_max) / abs(train_max)
+
+    ensures:
+        BacktestReport.created(
+            run: run,
+            chosen_strategy: chosen,
+            train_metrics: compute_metrics(chosen, run.market, run.train_window),
+            validation_metrics: compute_metrics(chosen, run.market, run.validation_window),
+            test_metrics: compute_metrics(chosen, run.market, run.test_window),
+            buy_and_hold_test: buy_and_hold_metrics(run.market, run.test_window),
+            random_entry_test: random_entry_metrics(
+                run.market, run.test_window, chosen.evaluation.n_entries
+            ),
+            overfitting_gap: gap,
+            per_generation: run.generations.map(g => GenerationMetricsSnapshot{
+                generation_number: g.number,
+                in_sample: g.in_sample_metrics,
+                validation: g.validation_metrics
+            })
+        )
+        run.status = reported
+
+    @guidance
+        -- compute_metrics(strategy, market, window): re-run the
+        -- strategy's signal expression over the bars whose open_time
+        -- falls inside `window`, simulate trades with the live cost
+        -- model (taker_fee_bps and slippage_bps applied per side), then
+        -- aggregate into a PerformanceMetrics value.
+        --
+        -- buy_and_hold_metrics(market, window): a single trade entered
+        -- at the first bar of the window and exited at the last,
+        -- expressed through the same PerformanceMetrics shape.
+        --
+        -- random_entry_metrics(market, window, n_entries): match the
+        -- candidate strategy's exposure by sampling n_entries random
+        -- bars in the window and running each through the same cost
+        -- model. If a strategy can't beat random-with-the-same-exposure,
+        -- it isn't a strategy.
+        --
+        -- abs(): standard absolute value. The overfitting_gap formula
+        -- normalises by |train_max| so positive and negative fitness
+        -- scales (e.g. log_increase) produce comparable gap values.
 }
 
 -- Backtest a single strategy against the run's market history. Produces a
@@ -369,6 +650,19 @@ rule ScoreStrategy {
             avg_gain: avg,
             fitness: fitness
         )
+
+    @guidance
+        -- simple_profit(backtest, buy_amount, target, stop): for each
+        -- closed trade compute the realised P&L from buy_amount and the
+        -- trade's outcome (target gain on target_hit, stop loss on
+        -- stopped_out), then subtract that trade's entry_fee, exit_fee
+        -- and slippage. Sum across closed trades. The per-trade cost
+        -- model is populated by simulate_trade using the run's
+        -- taker_fee_bps and slippage_bps config: each side incurs
+        -- buy_amount * fee_bps / 10_000, slippage adjusts the realised
+        -- entry/exit prices in the adverse direction. log_increase and
+        -- win_weighted likewise read t.performance, which simulate_trade
+        -- already computes net of fees and slippage.
 }
 
 -- Build the next generation from the current one: keep the elite,
@@ -412,12 +706,12 @@ rule CloneStrategy {
         )
 }
 
--- Sample two distinct parents (rank-weighted), perform PPX crossover,
--- then apply mutation to the offspring.
+-- Sample two distinct parents using the run's configured selection
+-- pressure, perform PPX crossover, then apply mutation to the offspring.
 rule BreedChildStrategy {
     when: BreedChildStrategy(parents_pool, into)
 
-    let parents = sample_distinct_pair(parents_pool, rank_weights(parents_pool))
+    let parents = sample_distinct_pair(parents_pool, into.run.selection_pressure)
     let crossed = ppx_crossover(parents.first.strategy, parents.second.strategy)
     let mutated = mutate_strategy(crossed, config.mutation_range)
 
@@ -434,8 +728,24 @@ rule BreedChildStrategy {
         -- parent to draw from (uniform 0/1); fall back to the other parent
         -- if the chosen one has run out of signals; skip duplicates.
         --
-        -- rank_weights: weight_i = N + 1 / (i + 1) for rank i. Higher-
-        -- ranked strategies are sampled disproportionately as parents.
+        -- sample_distinct_pair: dispatch on selection_pressure.
+        --
+        --   tournament (default, K=3): equivalent to picking K candidates
+        --   uniformly and keeping the best. Implemented as
+        --   weight_i = (N-i)^K - (N-i-1)^K so the same weighted-sample
+        --   primitive can drive every scheme. K is intentionally not a
+        --   config knob until experimentally needed.
+        --
+        --   rank_linear: weight_i = N - i so rank 0 has weight N and the
+        --   last rank has weight 1. Replaces the legacy
+        --   `weight_i = N + 1 / (i + 1)` formula, which collapsed to
+        --   nearly uniform weights and was the documented selection-
+        --   pressure bug.
+        --
+        --   fitness_proportional: weight_i = max(0, fitness_i - min_fitness)
+        --   so that the worst report gets weight 0 and weights scale with
+        --   raw fitness. Provided as a comparison baseline; sensitive to
+        --   fitness scale and not recommended as default.
         --
         -- mutate_strategy: choose one absolute signal at random, multiply
         -- its abs_value by (1 + delta) where delta is uniform in
@@ -478,23 +788,17 @@ invariant TradeThresholdsConsistent {
 -- Open Questions
 ------------------------------------------------------------
 
-open question "Trade overlap: should the engine prevent a new trade from
-opening while an earlier trade window is still active for the same
-strategy? The current code evaluates every entry independently."
+-- Resolved: the Backtest.NoOverlappingTrades invariant now forbids two
+-- trades for the same strategy from running concurrent windows. Bars
+-- whose signal fires while an earlier trade is still open are skipped.
 
-open question "Generation 0 vs 1 numbering: should the seeded population
-be generation 0 (the input to the first GA step) or generation 1 (the
-first to be ranked)? The code uses 1-indexed generations."
+open question "Generation 0 vs 1 numbering: should the seeded population be generation 0 (the input to the first GA step) or generation 1 (the first to be ranked)? The code uses 1-indexed generations."
 
-open question "Strategy uniqueness: nothing prevents the same chromosome
-from appearing twice in a population, either via random generation or as
-the offspring of crossover. Should duplicates be rejected to preserve
-search diversity, or kept to reflect convergence?"
+open question "Strategy uniqueness: nothing prevents the same chromosome from appearing twice in a population, either via random generation or as the offspring of crossover. Should duplicates be rejected to preserve search diversity, or kept to reflect convergence?"
 
-open question "Fitness penalty for noisy strategies: currently a strategy
-above the entry_cutoff_percent gets a single no_entries trade and
-fitness -1000. Is this severe enough that they cannot survive elitism in
-edge cases (e.g. an entire population fails)?"
+open question "Fitness penalty for noisy strategies: currently a strategy above the entry_cutoff_percent gets a single no_entries trade and fitness -1000. Is this severe enough that they cannot survive elitism in edge cases (e.g. an entire population fails)?"
+
+open question "Cross-window elite cache keying: when the same chromosome appears in successive generations (via elitism or convergence), its backtest is currently re-run from scratch. Caching by strategy_id alone is unsafe because the train, validation and test windows differ — and a future Phase will introduce per-window re-evaluation. Cache keys must be (strategy_id, window) to avoid serving train-window results when validation or test results are required."
 
 ------------------------------------------------------------
 -- Deferred Specifications
