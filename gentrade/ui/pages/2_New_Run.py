@@ -74,6 +74,12 @@ if submitted:
         st.error(f"start failed: {e}")
         st.stop()
 
-    st.success(f"Started run {resp['run_id']} (status: {resp['status']}).")
-    st.code(resp["run_id"], language="text")
-    st.caption("Paste this id into **Run detail** in the sidebar to track progress.")
+    detail_url = f"/Run_detail?run_id={resp['run_id']}"
+    st.success(f"Started run `{resp['run_id']}` (status: {resp['status']}).")
+    st.link_button("→ Watch live progress", detail_url, type="primary")
+    st.caption(
+        "The Run detail page auto-refreshes every 5 seconds while the run is "
+        "in progress. Once it reaches `reported`, click into the chosen "
+        "strategy from there to see the equity curve, drawdown, and trade "
+        "scatter."
+    )
