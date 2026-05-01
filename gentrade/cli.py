@@ -35,6 +35,7 @@ from gentrade.ga import GAConfig, run_ga
 from gentrade.ingest import (
     compute_indicators,
     fetch_ohlcv,
+    fetch_yfinance,
     save_parquet,
 )
 from gentrade.ingest import (
@@ -128,20 +129,38 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
-    """Download OHLCV from a ccxt exchange + add TA indicators + save Parquet."""
-    print(
-        f"fetching {args.asset} on {args.exchange} ({args.interval}) "
-        f"from {args.since}..."
-    )
-    df = fetch_ohlcv(
-        exchange_id=args.exchange,
-        symbol=args.asset,
-        interval=args.interval,
-        since=args.since,
-        until=args.until,
-    )
+    """Download OHLCV from ccxt or yfinance, add TA indicators, save Parquet."""
+    if args.source == "ccxt" and not args.exchange:
+        print("--exchange is required when --source=ccxt", file=sys.stderr)
+        return 7
+    if args.source == "yfinance":
+        print(
+            f"fetching {args.asset} from yfinance ({args.interval}) "
+            f"from {args.since}..."
+        )
+        df = fetch_yfinance(
+            symbol=args.asset,
+            interval=args.interval,
+            since=args.since,
+            until=args.until,
+        )
+        source_label = "yfinance"
+    else:
+        print(
+            f"fetching {args.asset} on {args.exchange} ({args.interval}) "
+            f"from {args.since}..."
+        )
+        df = fetch_ohlcv(
+            exchange_id=args.exchange,
+            symbol=args.asset,
+            interval=args.interval,
+            since=args.since,
+            until=args.until,
+        )
+        source_label = args.exchange
+
     if len(df) == 0:
-        print("exchange returned no bars; check symbol/interval/since.", file=sys.stderr)
+        print("source returned no bars; check symbol/interval/since.", file=sys.stderr)
         return 6
     print(f"  fetched {len(df):,} bars; computing indicators...")
     if not args.no_indicators:
@@ -161,7 +180,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "asset": asset_id,
-                "exchange": args.exchange,
+                "exchange": source_label,
                 "interval": args.interval,
                 "path": str(args.out),
             },
@@ -265,12 +284,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ingest_p = sub.add_parser(
         "ingest",
-        help="download OHLCV via ccxt, compute indicators, save as Parquet",
+        help="download OHLCV via ccxt or yfinance, compute indicators, save Parquet",
     )
-    ingest_p.add_argument("--exchange", required=True,
-                          help="ccxt exchange id (e.g. binance, coinbase, kraken)")
+    ingest_p.add_argument("--source", default="ccxt", choices=("ccxt", "yfinance"),
+                          help="data source backend (default: ccxt)")
+    ingest_p.add_argument("--exchange", default=None,
+                          help="ccxt exchange id (binance, coinbase, kraken, …); "
+                          "ignored when --source=yfinance")
     ingest_p.add_argument("--asset", required=True,
-                          help="ccxt symbol (e.g. BTC/USDT, ETH/USD)")
+                          help="ccxt symbol like BTC/USDT, or yfinance ticker like SPY")
     ingest_p.add_argument("--interval", default="15m",
                           help="bar interval (1m / 5m / 15m / 30m / 1h / 4h / 1d)")
     ingest_p.add_argument("--since", required=True,

@@ -387,6 +387,151 @@ def test_sse_events_requires_auth(client):
     assert r.status_code == 401
 
 
+def test_cross_asset_evaluates_strategy_against_other_registered_assets(tmp_path, monkeypatch):
+    """POST /backtests/cross_asset returns one row per requested asset."""
+    bars_a = _write_bars_csv(tmp_path / "a.csv")
+    bars_b = _write_bars_csv(tmp_path / "b.csv")
+    bars_c = _write_bars_csv(tmp_path / "c.csv")
+    asset_registry.configure_registry(
+        [
+            AssetEntry(asset="A-15m", exchange="test", interval="15m", path=bars_a),
+            AssetEntry(asset="B-15m", exchange="test", interval="15m", path=bars_b),
+            AssetEntry(asset="C-15m", exchange="test", interval="15m", path=bars_c),
+        ]
+    )
+    configure_api_key(API_KEY)
+    try:
+        from gentrade.api import jobs
+
+        def _fake_strategies(population_size: int, seed: int) -> list[dict]:
+            return [
+                {
+                    "id": f"s{i}",
+                    "indicators": [
+                        {"absolute": True, "indicator": "close", "op": ">=", "abs_value": 100.0 + i * 0.5}
+                    ],
+                    "conjunctions": [],
+                }
+                for i in range(population_size)
+            ]
+
+        monkeypatch.setattr(jobs, "_generate_strategies", _fake_strategies)
+
+        engine = init_db(f"sqlite:///{tmp_path}/g.db")
+        app = create_app(engine=engine, log_dir=tmp_path / "runs")
+        c = TestClient(app)
+
+        # Run on asset A first.
+        r = c.post(
+            "/runs",
+            json={"asset": "A-15m", "population_size": 4, "generations": 2, "seed": 42},
+            headers={"X-API-Key": API_KEY},
+        )
+        body = r.json()
+        final = _wait_for_status(c, body["run_id"], target="reported")
+        chosen_id = final["chosen_strategy_id"]
+
+        # Now evaluate on B and C.
+        r2 = c.post(
+            "/backtests/cross_asset",
+            json={
+                "run_id": body["run_id"],
+                "strategy_id": chosen_id,
+                "assets": ["B-15m", "C-15m"],
+            },
+            headers={"X-API-Key": API_KEY},
+        )
+        assert r2.status_code == 200
+        out = r2.json()
+        assert out["chosen_strategy_id"] == chosen_id
+        assert out["base_asset"] == "A-15m"
+        assert len(out["rows"]) == 2
+        assert {r["asset"] for r in out["rows"]} == {"B-15m", "C-15m"}
+        for row in out["rows"]:
+            assert row["error"] is None
+            assert row["n_bars"] > 0
+            assert "metrics" in row
+    finally:
+        asset_registry.configure_registry(None)
+        configure_api_key(None)
+
+
+def test_cross_asset_unresolved_asset_returns_per_row_error(tmp_path, monkeypatch):
+    """Mixing registered + unregistered assets surfaces per-row errors, not 4xx."""
+    bars_a = _write_bars_csv(tmp_path / "a.csv")
+    asset_registry.configure_registry(
+        [AssetEntry(asset="A-15m", exchange="test", interval="15m", path=bars_a)]
+    )
+    configure_api_key(API_KEY)
+    try:
+        from gentrade.api import jobs
+
+        def _fake(population_size: int, seed: int) -> list[dict]:
+            return [
+                {
+                    "id": f"s{i}",
+                    "indicators": [
+                        {"absolute": True, "indicator": "close", "op": ">=", "abs_value": 100.0 + i * 0.5}
+                    ],
+                    "conjunctions": [],
+                }
+                for i in range(population_size)
+            ]
+
+        monkeypatch.setattr(jobs, "_generate_strategies", _fake)
+
+        engine = init_db(f"sqlite:///{tmp_path}/g.db")
+        app = create_app(engine=engine, log_dir=tmp_path / "runs")
+        c = TestClient(app)
+
+        r = c.post(
+            "/runs",
+            json={"asset": "A-15m", "population_size": 4, "generations": 2, "seed": 42},
+            headers={"X-API-Key": API_KEY},
+        )
+        body = r.json()
+        final = _wait_for_status(c, body["run_id"], target="reported")
+
+        r2 = c.post(
+            "/backtests/cross_asset",
+            json={
+                "run_id": body["run_id"],
+                "strategy_id": final["chosen_strategy_id"],
+                "assets": ["A-15m", "GHOST-15m"],
+            },
+            headers={"X-API-Key": API_KEY},
+        )
+        assert r2.status_code == 200
+        rows = r2.json()["rows"]
+        ghost = next(r for r in rows if r["asset"] == "GHOST-15m")
+        assert ghost["error"] is not None
+        assert "registry" in ghost["error"]
+    finally:
+        asset_registry.configure_registry(None)
+        configure_api_key(None)
+
+
+def test_cross_asset_no_resolvable_assets_returns_422(client):
+    c, _ = client
+    body = c.post(
+        "/runs",
+        json={"asset": "TEST-15m", "population_size": 4, "generations": 2, "seed": 42},
+        headers={"X-API-Key": API_KEY},
+    ).json()
+    final = _wait_for_status(c, body["run_id"], target="reported")
+
+    r = c.post(
+        "/backtests/cross_asset",
+        json={
+            "run_id": body["run_id"],
+            "strategy_id": final["chosen_strategy_id"],
+            "assets": ["GHOST-1", "GHOST-2"],
+        },
+        headers={"X-API-Key": API_KEY},
+    )
+    assert r.status_code == 422
+
+
 def test_post_backtest_unknown_strategy_returns_404(client):
     c, _ = client
     r = c.post(

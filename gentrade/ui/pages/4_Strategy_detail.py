@@ -128,3 +128,55 @@ st.plotly_chart(fig_sc, use_container_width=True)
 # ---------------- raw table ----------------
 with st.expander("trades"):
     st.dataframe(tdf, use_container_width=True, hide_index=True)
+
+# ---------------- cross-asset robustness ----------------
+st.subheader("Cross-asset robustness")
+st.caption(
+    "Pick other registered assets to re-run this strategy on. If the metrics "
+    "fall apart on assets it wasn't trained on, the strategy was a curve fit."
+)
+try:
+    available = client.list_assets()
+except ApiError as e:
+    st.error(f"failed to load assets: {e}")
+    available = []
+
+asset_names = [a["asset"] for a in available]
+default_targets = [a for a in asset_names if a != strat.get("base_asset")]
+choice = st.multiselect(
+    "Assets to compare",
+    options=asset_names,
+    default=default_targets[:3],
+)
+if st.button("Compare", disabled=not choice):
+    try:
+        cmp_resp = client.post_cross_asset(run_id, strategy_id, choice)
+    except ApiError as e:
+        st.error(str(e))
+    else:
+        rows = cmp_resp.get("rows", [])
+        if not rows:
+            st.info("No rows returned.")
+        else:
+            cmp_rows = []
+            for r in rows:
+                m = r.get("metrics") or {}
+                cmp_rows.append({
+                    "asset": r["asset"],
+                    "n_bars": r["n_bars"],
+                    "n_trades": m.get("n_trades", 0),
+                    "win_rate": fmt(m.get("win_rate"), ".2%"),
+                    "expectancy": fmt(m.get("expectancy"), "+.4f"),
+                    "sharpe": fmt(m.get("sharpe"), "+.2f"),
+                    "max_dd": fmt(m.get("max_drawdown"), "+.4f"),
+                    "error": r.get("error") or "",
+                })
+            cmp_df = pd.DataFrame(cmp_rows)
+            st.dataframe(cmp_df, use_container_width=True, hide_index=True)
+            base = cmp_resp.get("base_asset")
+            if base:
+                st.caption(
+                    f"This strategy was trained on `{base}`. Compare its "
+                    f"out-of-sample test metrics there to the per-asset rows "
+                    f"above — large drops on other assets are the curve-fit signal."
+                )

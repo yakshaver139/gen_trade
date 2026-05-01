@@ -99,8 +99,37 @@ gentrade resume <run_id> --data ./data/BTCUSDT-15m.parquet
 ```
 
 `gentrade ingest` works against any [ccxt](https://github.com/ccxt/ccxt)-supported
-exchange — Binance, Coinbase, Kraken, Bybit, OKX, etc. Both CSV and Parquet
-inputs are accepted by `--data`; Parquet is much faster for the inner loop.
+exchange — Binance, Coinbase, Kraken, Bybit, OKX, etc. Pass `--source yfinance`
+for equities (e.g. `--asset SPY --interval 1d`); be aware of the market-hours
+mismatch — the default `trade_window_bars=96` (one day at 15-min crypto) may
+need to be tightened for daily equity bars. Both CSV and Parquet inputs are
+accepted by `--data`; Parquet is much faster for the inner loop.
+
+```sh
+# crypto (ccxt)
+gentrade ingest --exchange binance --asset BTC/USDT --interval 15m \
+                --since 2022-01-01 --out ./data/BTCUSDT-15m.parquet
+
+# equity (yfinance)
+gentrade ingest --source yfinance --asset SPY --interval 1d \
+                --since 2018-01-01 --out ./data/SPY-1d.parquet
+```
+
+### Cross-asset robustness check
+
+Once a run has finished, you can re-run its chosen strategy against any
+other registered asset to spot curve-fits:
+
+```sh
+curl -X POST http://127.0.0.1:8000/backtests/cross_asset \
+  -H "X-API-Key: $GENTRADE_API_KEY" -H 'content-type: application/json' \
+  -d '{"run_id":"<id>","strategy_id":"<id>","assets":["ETH-15m","SOL-15m"]}'
+```
+
+The Strategy detail UI page exposes the same comparison via a
+multiselect + table — pick assets, click **Compare**, see one row per
+asset with `n_trades / win_rate / expectancy / sharpe / max_dd`. A
+strategy that wins on `BTC-15m` and craters on `ETH-15m` was a curve fit.
 
 Behaviour worth knowing:
 
@@ -297,17 +326,24 @@ there could be a calculation error." The Phase 1 work is the audit of that claim
   produced yet — the random-entry baseline ships, but a single seed isn't a confidence interval.
 - The legacy `genetic.main` and `run_strategy` paths are still present and still drive the smoke
   test. They use the old no-friction, no-overlap-rule evaluator. Don't trust their numbers.
-- **Cross-asset robustness is not yet checked.** A strategy that wins on `BTC/USDT` should be
-  re-evaluated on `ETH/USDT`, `SOL/USDT` etc. — if it falls apart it was a curve-fit. Phase 5
-  session 2 ships this.
-- Equities (`SPY` etc.) are not supported yet; ccxt is crypto-only. yfinance support with
-  market-hours and survivorship-bias awareness is also Phase 5 session 2.
+- **Cross-asset robustness check is wired up but not yet automatic.** The endpoint
+  (`POST /backtests/cross_asset`) and the Strategy detail UI section let you re-run a
+  strategy on other registered assets and read the per-asset metrics; making it part
+  of the headline `BacktestReport` so you can't ship a curve-fit by accident is the
+  next step.
+- **yfinance equity support has the obvious caveats.** Survivorship bias: yfinance
+  only returns currently-listed tickers, so any backtest that uses it overestimates
+  the universe's returns. Market hours: equities trade ~6.5h/day on weekdays, so
+  the default `trade_window_bars` (calibrated for 24/7 crypto) may need tightening.
+  Both are documented at the call site in `gentrade/ingest.py::fetch_yfinance`.
+- Per-asset signal thresholds are still global (a strategy that uses
+  `momentum_rsi >= 70` interprets that the same way for BTC and SOL); the GA already
+  mutates absolute thresholds, but cross-asset retraining isn't automatic.
 - No paper trading. No live trading. No risk module.
 
 If you point money at this code in its current state, that's on you.
 
 See [`PLAN.md`](PLAN.md) for the phased plan. Phases 0 (revival), 1 (modelling rigor),
 2 (persistence + job model), 3 (FastAPI + auth + security review), 4 (Streamlit UI),
-and 5 (multi-asset ingest via ccxt + Parquet) are complete. Phase 5 follow-ups
-(per-asset thresholds, cross-asset robustness, yfinance for equities) and Phase 6
-(paper + live trading, gated) are not yet started.
+and 5 (multi-asset ingest via ccxt + yfinance + cross-asset robustness check) are
+complete. Phase 6 (paper + live trading, gated) is not yet started.

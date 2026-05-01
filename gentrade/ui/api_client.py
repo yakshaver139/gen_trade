@@ -100,3 +100,12 @@ class ApiClient:
         return self._request(
             "POST", "/backtests", json={"run_id": run_id, "strategy_id": strategy_id}
         )
+
+    def post_cross_asset(
+        self, run_id: str, strategy_id: str, assets: list[str]
+    ) -> dict:
+        return self._request(
+            "POST",
+            "/backtests/cross_asset",
+            json={"run_id": run_id, "strategy_id": strategy_id, "assets": assets},
+        )

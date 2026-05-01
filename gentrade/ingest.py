@@ -126,6 +126,91 @@ def fetch_ohlcv(
     return df
 
 
+YFINANCE_INTERVALS = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "4h": "4h",
+    "1d": "1d",
+}
+
+
+def fetch_yfinance(
+    symbol: str,
+    interval: str = "1d",
+    since: pd.Timestamp | datetime | str | None = None,
+    until: pd.Timestamp | datetime | str | None = None,
+    *,
+    yf_module=None,  # injected for tests
+) -> pd.DataFrame:
+    """Fetch OHLCV from Yahoo Finance via yfinance.
+
+    yfinance's intraday history is bounded (typically ~60 days for 1m,
+    ~730 days for 1h); for daily and longer-window backtests this is fine.
+    The function normalises the response to the same OHLCV schema as the
+    ccxt path so downstream code is asset-class-agnostic.
+
+    Be aware of two structural caveats with equities (vs crypto):
+    - **Market hours**: equities are closed nights / weekends, so the
+      "trade window = 1 day" assumption may need revisiting in
+      `BacktestConfig.trade_window_bars`.
+    - **Survivorship bias**: yfinance only returns currently-listed
+      symbols. Train on a universe that includes dead names where
+      possible; we do not yet provide one.
+    """
+    if interval not in YFINANCE_INTERVALS:
+        raise ValueError(
+            f"unsupported yfinance interval {interval!r}; choose from "
+            f"{list(YFINANCE_INTERVALS)}"
+        )
+
+    if yf_module is None:
+        import yfinance as yf  # local import; only paid when fetch_yfinance runs
+
+        yf_module = yf
+
+    start = pd.Timestamp(since) if since is not None else None
+    end = pd.Timestamp(until) if until is not None else None
+
+    raw = yf_module.download(
+        tickers=symbol,
+        start=start.tz_convert("UTC").tz_localize(None) if start is not None and start.tzinfo else start,
+        end=end.tz_convert("UTC").tz_localize(None) if end is not None and end.tzinfo else end,
+        interval=YFINANCE_INTERVALS[interval],
+        auto_adjust=True,
+        progress=False,
+    )
+    if raw is None or len(raw) == 0:
+        return pd.DataFrame(columns=OHLCV_COLS).astype(
+            {"open_ts": "datetime64[ns, UTC]", "open": float, "high": float,
+             "low": float, "close": float, "volume": float}
+        )
+
+    # yfinance returns a DataFrame indexed by Timestamp with columns
+    # {Open, High, Low, Close, Volume} (and possibly multi-index when
+    # multiple tickers — we always pass a single ticker).
+    df = raw.reset_index()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    # Index column is "Date" (daily) or "Datetime" (intraday).
+    ts_col = "Datetime" if "Datetime" in df.columns else "Date"
+    df = df.rename(
+        columns={
+            ts_col: "open_ts",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        }
+    )
+    df["open_ts"] = pd.to_datetime(df["open_ts"], utc=True)
+    df = df[OHLCV_COLS].sort_values("open_ts").reset_index(drop=True)
+    return df
+
+
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Add the ``ta`` library's standard indicator set in place-safe fashion.
 

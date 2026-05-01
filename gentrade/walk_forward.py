@@ -242,3 +242,89 @@ def produce_backtest_report(
         overfitting_gap=gap,
         per_generation=list(per_generation) if per_generation else [],
     )
+
+
+# ---------------------------------------------------------------------------
+# Cross-asset robustness
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CrossAssetRow:
+    """One asset's test-window evaluation in a cross-asset robustness check."""
+
+    asset: str
+    metrics: PerformanceMetrics
+    n_bars: int
+    error: str | None = None
+
+
+def evaluate_strategy_on_assets(
+    strategy: dict,
+    asset_bars: dict[str, pd.DataFrame],
+    config: BacktestConfig,
+    *,
+    train_frac: float = 0.6,
+    val_frac: float = 0.2,
+    periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
+) -> list[CrossAssetRow]:
+    """Re-run a single strategy on each asset's *test* slice.
+
+    Each asset's bars are split chronologically with the same proportions
+    used by the rest of the system (60/20/20 by default); only the test
+    slice is evaluated, so the strategy is genuinely held out for each
+    asset. ``evaluate_strategy`` already short-circuits to no-trades when
+    the bars frame is missing a column the chromosome references — a
+    strategy that referenced ``momentum_rsi`` will silently degrade
+    rather than crash on an asset without that indicator.
+
+    Returns one row per asset in input order, each with the asset id,
+    the test-window PerformanceMetrics, and the bar count. ``error`` is
+    populated if the asset failed to load / split / evaluate.
+    """
+    out: list[CrossAssetRow] = []
+    for asset_id, bars in asset_bars.items():
+        try:
+            n = len(bars)
+            if n < 5:
+                out.append(
+                    CrossAssetRow(
+                        asset=asset_id,
+                        metrics=_zero_metrics(),
+                        n_bars=n,
+                        error=f"only {n} bars — too short to split",
+                    )
+                )
+                continue
+            train_end = int(n * train_frac)
+            val_end = train_end + int(n * val_frac)
+            test_bars = bars.iloc[val_end:].reset_index(drop=True)
+            trades = evaluate_strategy(test_bars, strategy, config)
+            metrics = compute_metrics(trades, periods_per_year=periods_per_year)
+            out.append(
+                CrossAssetRow(asset=asset_id, metrics=metrics, n_bars=n, error=None)
+            )
+        except Exception as e:  # noqa: BLE001 — surface per-asset failures without aborting
+            out.append(
+                CrossAssetRow(
+                    asset=asset_id,
+                    metrics=_zero_metrics(),
+                    n_bars=len(bars) if bars is not None else 0,
+                    error=str(e),
+                )
+            )
+    return out
+
+
+def _zero_metrics() -> PerformanceMetrics:
+    """Empty PerformanceMetrics for the error / too-short paths."""
+    return PerformanceMetrics(
+        n_trades=0,
+        win_rate=0.0,
+        profit_factor=0.0,
+        expectancy=0.0,
+        sharpe=math.nan,
+        sortino=math.nan,
+        calmar=math.nan,
+        max_drawdown=0.0,
+        avg_trade_duration=pd.Timedelta(0),
+    )

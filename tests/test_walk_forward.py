@@ -323,6 +323,71 @@ def test_produce_backtest_report_random_baseline_seed_reproducible():
     assert a.random_entry_test.n_trades == b.random_entry_test.n_trades
 
 
+def test_evaluate_strategy_on_assets_reports_per_asset_metrics():
+    """The cross-asset evaluator returns one row per input asset, in order."""
+    from gentrade.walk_forward import evaluate_strategy_on_assets
+
+    strategy = {
+        "id": "always-on",
+        "indicators": [
+            {
+                "absolute": True,
+                "indicator": "close_marker",
+                "op": ">=",
+                "abs_value": 0,
+            }
+        ],
+        "conjunctions": [],
+    }
+    bars_a = make_bars(100, drift=0.001)
+    bars_b = make_bars(100, drift=-0.001)
+    rows = evaluate_strategy_on_assets(
+        strategy, {"A": bars_a, "B": bars_b}, CFG
+    )
+    assert [r.asset for r in rows] == ["A", "B"]
+    for r in rows:
+        assert r.error is None
+        assert r.n_bars == 100
+        assert r.metrics is not None
+
+
+def test_evaluate_strategy_on_assets_handles_missing_columns():
+    """Strategy referencing a column the asset doesn't have → 0 trades, no crash."""
+    from gentrade.walk_forward import evaluate_strategy_on_assets
+
+    strategy = {
+        "id": "missing-col",
+        "indicators": [
+            {
+                "absolute": True,
+                "indicator": "momentum_does_not_exist",
+                "op": ">=",
+                "abs_value": 50,
+            }
+        ],
+        "conjunctions": [],
+    }
+    bars = make_bars(100)
+    rows = evaluate_strategy_on_assets(strategy, {"A": bars}, CFG)
+    assert rows[0].error is None
+    assert rows[0].metrics.n_trades == 0
+
+
+def test_evaluate_strategy_on_assets_too_few_bars_marks_error():
+    from gentrade.walk_forward import evaluate_strategy_on_assets
+
+    strategy = {
+        "id": "any",
+        "indicators": [
+            {"absolute": True, "indicator": "close_marker", "op": ">=", "abs_value": 0}
+        ],
+        "conjunctions": [],
+    }
+    rows = evaluate_strategy_on_assets(strategy, {"tiny": make_bars(2)}, CFG)
+    assert rows[0].error is not None
+    assert "too short" in rows[0].error
+
+
 def test_produce_backtest_report_train_metrics_only_see_train_window():
     """A strategy that fires only outside the train window has 0 train trades."""
     bars = make_bars(60, drift=0.002)

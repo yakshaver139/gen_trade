@@ -37,6 +37,9 @@ from gentrade.api.schemas import (
     BacktestResponse,
     CreateRunRequest,
     CreateRunResponse,
+    CrossAssetRequest,
+    CrossAssetResponse,
+    CrossAssetRowOut,
     GenerationDetailOut,
     GenerationMetricsOut,
     GenerationSummaryOut,
@@ -398,6 +401,87 @@ def create_app(
             test_trades=test_trades,
         )
 
+    @app.post("/backtests/cross_asset", response_model=CrossAssetResponse)
+    def post_cross_asset(body: CrossAssetRequest, _: None = auth) -> CrossAssetResponse:
+        """Re-evaluate one strategy across a list of registered assets.
+
+        For each asset: load bars, slice off the test slice (default 60/20/20
+        chronological split), evaluate the strategy on it, return the
+        per-trade metrics. Used to spot strategies that win on the asset
+        they were trained on but fall apart elsewhere — i.e. curve fits.
+        """
+        from gentrade.walk_forward import evaluate_strategy_on_assets
+
+        with Session(engine) as session:
+            run = session.get(RunRow, body.run_id)
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"run {body.run_id} not found")
+            stmt = select(StrategyRow).where(
+                StrategyRow.run_id == body.run_id,
+                StrategyRow.id == body.strategy_id,
+            )
+            rows = session.scalars(stmt).all()
+            if not rows:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"strategy {body.strategy_id} not in run {body.run_id}",
+                )
+            strategy_row = max(rows, key=lambda s: s.generation_number)
+            cfg_dict = json.loads(run.config_snapshot_json).get("backtest", {})
+            base_asset = json.loads(run.config_snapshot_json).get("asset")
+
+        bt_cfg = BacktestConfig(**cfg_dict) if cfg_dict else BacktestConfig()
+        strategy = {
+            "id": strategy_row.id,
+            "indicators": json.loads(strategy_row.indicators_json),
+            "conjunctions": json.loads(strategy_row.conjunctions_json),
+        }
+
+        # Resolve every requested asset to a bars frame. Unknown assets
+        # are surfaced as per-row errors (one missing entry shouldn't
+        # fail the whole comparison).
+        asset_bars: dict = {}
+        unresolved: list[str] = []
+        for asset_id in body.assets:
+            entry = asset_registry.resolve(asset_id)
+            if entry is None:
+                unresolved.append(asset_id)
+                continue
+            asset_bars[asset_id] = _load_bars_for_backtest(entry.path)
+        if not asset_bars:
+            raise HTTPException(
+                status_code=422,
+                detail=f"none of the requested assets are registered: {unresolved}",
+            )
+
+        results = evaluate_strategy_on_assets(strategy, asset_bars, bt_cfg)
+        rows_out: list[CrossAssetRowOut] = [
+            CrossAssetRowOut(
+                asset=r.asset,
+                n_bars=r.n_bars,
+                metrics=_metrics_out(r.metrics),
+                error=r.error,
+            )
+            for r in results
+        ]
+        # Append explicit rows for unresolved assets so the caller sees
+        # them in the same payload shape.
+        for asset_id in unresolved:
+            rows_out.append(
+                CrossAssetRowOut(
+                    asset=asset_id,
+                    n_bars=0,
+                    metrics=_metrics_out(_zero_metrics_for_response()),
+                    error="asset not in server-side registry",
+                )
+            )
+
+        return CrossAssetResponse(
+            chosen_strategy_id=strategy_row.id,
+            base_asset=base_asset,
+            rows=rows_out,
+        )
+
     return app
 
 
@@ -440,6 +524,23 @@ def _strategy_out(run_id: str, row: StrategyRow) -> StrategyOut:
 
 def _isnan(x: float) -> bool:
     return x != x  # NaN is the only float that's not equal to itself
+
+
+def _zero_metrics_for_response() -> PerformanceMetrics:
+    """An empty PerformanceMetrics for the unresolved-asset row in cross-asset responses."""
+    import math
+
+    return PerformanceMetrics(
+        n_trades=0,
+        win_rate=0.0,
+        profit_factor=0.0,
+        expectancy=0.0,
+        sharpe=math.nan,
+        sortino=math.nan,
+        calmar=math.nan,
+        max_drawdown=0.0,
+        avg_trade_duration=pd.Timedelta(0),
+    )
 
 
 # Default factory for `uvicorn gentrade.api.app:default_app --factory`.

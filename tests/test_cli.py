@@ -257,6 +257,68 @@ def test_ingest_no_indicators_writes_ohlcv_only(tmp_path, monkeypatch):
     assert list(df.columns) == ["open_ts", "open", "high", "low", "close", "volume"]
 
 
+def test_ingest_with_yfinance_source(tmp_path, monkeypatch):
+    """`gentrade ingest --source yfinance` writes the same Parquet shape."""
+    idx = pd.DatetimeIndex(
+        pd.date_range("2022-01-01", periods=10, freq="D"), name="Date"
+    )
+    raw = pd.DataFrame(
+        {
+            "Open": np.arange(10) + 100.0,
+            "High": np.arange(10) + 101.0,
+            "Low": np.arange(10) + 99.0,
+            "Close": np.arange(10) + 100.5,
+            "Volume": np.full(10, 1000.0),
+        },
+        index=idx,
+    )
+
+    class FakeYF:
+        def download(self, **kwargs):
+            return raw
+
+    from gentrade import ingest
+
+    monkeypatch.setattr(ingest, "yfinance", FakeYF(), raising=False)
+    # Replace the runtime import inside fetch_yfinance.
+    real_fetch = ingest.fetch_yfinance
+
+    def fetch_with_fake(*args, **kwargs):
+        kwargs.setdefault("yf_module", FakeYF())
+        return real_fetch(*args, **kwargs)
+
+    monkeypatch.setattr(ingest, "fetch_yfinance", fetch_with_fake)
+    # Re-import in the cli module so it sees the patched function.
+    from gentrade import cli
+
+    monkeypatch.setattr(cli, "fetch_yfinance", fetch_with_fake)
+
+    out_path = tmp_path / "SPY-1d.parquet"
+    rc = main([
+        "ingest",
+        "--source", "yfinance",
+        "--asset", "SPY",
+        "--interval", "1d",
+        "--since", "2022-01-01",
+        "--out", str(out_path),
+        "--no-indicators",
+    ])
+    assert rc == 0
+    assert out_path.exists()
+
+
+def test_ingest_ccxt_source_requires_exchange(tmp_path):
+    rc = main([
+        "ingest",
+        "--source", "ccxt",
+        "--asset", "BTC/USDT",
+        "--interval", "15m",
+        "--since", "2022-01-01",
+        "--out", str(tmp_path / "x.parquet"),
+    ])
+    assert rc == 7
+
+
 def test_show_prints_headline_metrics_for_a_run(tmp_path):
     bars_csv = _write_bars_csv(tmp_path / "bars.csv")
     strats_json = _write_strategies_json(tmp_path / "strats.json")

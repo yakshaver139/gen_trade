@@ -181,3 +181,30 @@ class AssetOut(BaseModel):
     asset: str
     exchange: str
     interval: str
+
+
+class CrossAssetRequest(BaseModel):
+    """Re-evaluate a saved strategy on a list of registered assets.
+
+    Each ``asset`` is a name from the server-side registry — same trust
+    boundary as POST /runs. The strategy is loaded from the DB by
+    ``(run_id, strategy_id)``; nothing is accepted from the wire that
+    could feed the pandas query string.
+    """
+
+    run_id: str
+    strategy_id: str
+    assets: list[str] = Field(min_length=1, max_length=20)
+
+
+class CrossAssetRowOut(BaseModel):
+    asset: str
+    n_bars: int
+    metrics: PerformanceMetricsOut
+    error: str | None = None
+
+
+class CrossAssetResponse(BaseModel):
+    chosen_strategy_id: str
+    base_asset: str | None
+    rows: list[CrossAssetRowOut]

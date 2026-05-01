@@ -186,6 +186,57 @@ def test_parquet_round_trip_preserves_tz_and_values(tmp_path):
     assert loaded["open_ts"].dt.tz is not None
 
 
+def test_fetch_yfinance_normalises_to_ohlcv_schema():
+    """yfinance backend returns the same OHLCV schema as the ccxt path."""
+    from gentrade.ingest import fetch_yfinance
+
+    # Build a fake yfinance.download response: DataFrame indexed by Date,
+    # columns Open / High / Low / Close / Volume.
+    idx = pd.DatetimeIndex(
+        pd.date_range("2022-01-01", periods=5, freq="D"), name="Date"
+    )
+    raw = pd.DataFrame(
+        {
+            "Open": [100.0, 101.0, 102.0, 103.0, 104.0],
+            "High": [101.0, 102.0, 103.0, 104.0, 105.0],
+            "Low": [99.0, 100.0, 101.0, 102.0, 103.0],
+            "Close": [100.5, 101.5, 102.5, 103.5, 104.5],
+            "Volume": [1000, 1100, 1200, 1300, 1400],
+        },
+        index=idx,
+    )
+
+    class FakeYF:
+        def download(self, **kwargs):
+            return raw
+
+    df = fetch_yfinance("SPY", interval="1d", since="2022-01-01", yf_module=FakeYF())
+
+    assert list(df.columns) == OHLCV_COLS
+    assert len(df) == 5
+    assert df["open_ts"].dt.tz is not None  # UTC
+    assert df["open_ts"].is_monotonic_increasing
+
+
+def test_fetch_yfinance_empty_returns_empty_frame():
+    from gentrade.ingest import fetch_yfinance
+
+    class FakeYF:
+        def download(self, **kwargs):
+            return None
+
+    df = fetch_yfinance("BAD", interval="1d", since="2022-01-01", yf_module=FakeYF())
+    assert len(df) == 0
+    assert list(df.columns) == OHLCV_COLS
+
+
+def test_fetch_yfinance_unknown_interval_raises():
+    from gentrade.ingest import fetch_yfinance
+
+    with pytest.raises(ValueError, match="unsupported yfinance interval"):
+        fetch_yfinance("SPY", interval="2m", since="2022-01-01")
+
+
 def test_parquet_save_creates_parent_directory(tmp_path):
     df = _ohlcv(n=5)
     nested = tmp_path / "deep" / "nested" / "dir" / "bars.parquet"

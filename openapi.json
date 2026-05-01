@@ -191,6 +191,101 @@
         "title": "CreateRunResponse",
         "type": "object"
       },
+      "CrossAssetRequest": {
+        "description": "Re-evaluate a saved strategy on a list of registered assets.\n\nEach ``asset`` is a name from the server-side registry \u2014 same trust\nboundary as POST /runs. The strategy is loaded from the DB by\n``(run_id, strategy_id)``; nothing is accepted from the wire that\ncould feed the pandas query string.",
+        "properties": {
+          "assets": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Assets",
+            "type": "array"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "strategy_id": {
+            "title": "Strategy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "strategy_id",
+          "assets"
+        ],
+        "title": "CrossAssetRequest",
+        "type": "object"
+      },
+      "CrossAssetResponse": {
+        "properties": {
+          "base_asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Asset"
+          },
+          "chosen_strategy_id": {
+            "title": "Chosen Strategy Id",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/CrossAssetRowOut"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "chosen_strategy_id",
+          "base_asset",
+          "rows"
+        ],
+        "title": "CrossAssetResponse",
+        "type": "object"
+      },
+      "CrossAssetRowOut": {
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/PerformanceMetricsOut"
+          },
+          "n_bars": {
+            "title": "N Bars",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset",
+          "n_bars",
+          "metrics"
+        ],
+        "title": "CrossAssetRowOut",
+        "type": "object"
+      },
       "GenerationDetailOut": {
         "properties": {
           "number": {
@@ -883,6 +978,63 @@
           }
         },
         "summary": "Post Backtest"
+      }
+    },
+    "/backtests/cross_asset": {
+      "post": {
+        "description": "Re-evaluate one strategy across a list of registered assets.\n\nFor each asset: load bars, slice off the test slice (default 60/20/20\nchronological split), evaluate the strategy on it, return the\nper-trade metrics. Used to spot strategies that win on the asset\nthey were trained on but fall apart elsewhere \u2014 i.e. curve fits.",
+        "operationId": "post_cross_asset_backtests_cross_asset_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrossAssetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrossAssetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Cross Asset"
       }
     },
     "/healthz": {
