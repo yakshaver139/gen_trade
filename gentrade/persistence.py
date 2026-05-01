@@ -30,7 +30,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import pickle
 import random
 import uuid
 from dataclasses import dataclass, fields
@@ -484,16 +483,48 @@ def resume_persisted_run(run_id: str, engine: Engine) -> ResumeState:
 
 
 def serialise_rng_states() -> tuple[bytes, bytes]:
-    """Pickle the current Python and numpy global RNG states."""
-    return pickle.dumps(random.getstate()), pickle.dumps(np.random.get_state())
+    """JSON-encode the current Python and numpy global RNG states.
+
+    Both states are tuples of (version-tag, list/array of ints, small ints).
+    JSON gives us deterministic, language-portable, deserialisation-safe
+    blobs — `pickle.loads` over DB content is an RCE gadget if an attacker
+    ever gains write access to the database (CWE-502).
+    """
+    py = random.getstate()
+    # Python's getstate returns (version_int, tuple_of_624_ints+1, None_or_float).
+    py_payload = {
+        "version": py[0],
+        "state": list(py[1]),
+        "gauss_next": py[2],
+    }
+    np_state = np.random.get_state()
+    # numpy's get_state returns ('MT19937', ndarray uint32 624, int, int, float).
+    np_payload = {
+        "name": np_state[0],
+        "state": [int(x) for x in np_state[1]],
+        "pos": int(np_state[2]),
+        "has_gauss": int(np_state[3]),
+        "cached_gaussian": float(np_state[4]),
+    }
+    return json.dumps(py_payload).encode(), json.dumps(np_payload).encode()
 
 
 def restore_rng_states(py_state: bytes | None, np_state: bytes | None) -> None:
-    """Restore previously-pickled RNG states (no-op if either is None)."""
+    """Restore RNG states previously written by ``serialise_rng_states``."""
     if py_state is not None:
-        random.setstate(pickle.loads(py_state))
+        py = json.loads(py_state.decode() if isinstance(py_state, bytes | bytearray) else py_state)
+        random.setstate((py["version"], tuple(py["state"]), py["gauss_next"]))
     if np_state is not None:
-        np.random.set_state(pickle.loads(np_state))
+        nps = json.loads(np_state.decode() if isinstance(np_state, bytes | bytearray) else np_state)
+        np.random.set_state(
+            (
+                nps["name"],
+                np.array(nps["state"], dtype=np.uint32),
+                nps["pos"],
+                nps["has_gauss"],
+                nps["cached_gaussian"],
+            )
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -166,6 +166,38 @@ def test_unknown_command_prints_help_and_returns_nonzero(tmp_path):
         main(["wat"])
 
 
+def test_show_prints_headline_metrics_for_a_run(tmp_path):
+    bars_csv = _write_bars_csv(tmp_path / "bars.csv")
+    strats_json = _write_strategies_json(tmp_path / "strats.json")
+    db_url = f"sqlite:///{tmp_path}/g.db"
+    init_db(db_url)
+    main([
+        "run", "--data", bars_csv, "--strategies", strats_json,
+        "--population-size", "4", "--generations", "2", "--seed", "42",
+        "--db-url", db_url, "--allow-dirty",
+    ])
+
+    rows = list_runs(init_db(db_url))
+    run_id = rows[0]["id"]
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["show", run_id, "--db-url", db_url])
+    assert rc == 0
+    out = buf.getvalue()
+    assert run_id in out
+    assert "reported" in out
+    assert "generation" in out
+    assert "train_max" in out
+
+
+def test_show_unknown_id_returns_nonzero(tmp_path):
+    db_url = f"sqlite:///{tmp_path}/g.db"
+    init_db(db_url)
+    rc = main(["show", "not-a-real-id", "--db-url", db_url])
+    assert rc != 0
+
+
 def test_run_resume_unknown_id_returns_nonzero(tmp_path):
     bars_csv = _write_bars_csv(tmp_path / "bars.csv")
     db_url = f"sqlite:///{tmp_path}/g.db"

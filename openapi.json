@@ -1,0 +1,1128 @@
+{
+  "components": {
+    "schemas": {
+      "AssetOut": {
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "exchange": {
+            "title": "Exchange",
+            "type": "string"
+          },
+          "interval": {
+            "title": "Interval",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset",
+          "exchange",
+          "interval"
+        ],
+        "title": "AssetOut",
+        "type": "object"
+      },
+      "BacktestRequest": {
+        "description": "Re-run a saved strategy on the run's original windows.\n\n``train_window``/``validation_window``/``test_window`` are intentionally\nNOT exposed yet \u2014 Phase 5 will add cross-asset / cross-window\nre-evaluation, with whitelisted asset registration. For now, the only\nsupported re-run is on the same windows the strategy came from.",
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "strategy_id": {
+            "title": "Strategy Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "strategy_id"
+        ],
+        "title": "BacktestRequest",
+        "type": "object"
+      },
+      "BacktestResponse": {
+        "properties": {
+          "buy_and_hold_test": {
+            "$ref": "#/components/schemas/PerformanceMetricsOut"
+          },
+          "chosen_strategy_id": {
+            "title": "Chosen Strategy Id",
+            "type": "string"
+          },
+          "overfitting_gap": {
+            "title": "Overfitting Gap",
+            "type": "number"
+          },
+          "random_entry_test": {
+            "$ref": "#/components/schemas/PerformanceMetricsOut"
+          },
+          "test_metrics": {
+            "$ref": "#/components/schemas/PerformanceMetricsOut"
+          },
+          "train_metrics": {
+            "$ref": "#/components/schemas/PerformanceMetricsOut"
+          },
+          "validation_metrics": {
+            "$ref": "#/components/schemas/PerformanceMetricsOut"
+          }
+        },
+        "required": [
+          "chosen_strategy_id",
+          "train_metrics",
+          "validation_metrics",
+          "test_metrics",
+          "buy_and_hold_test",
+          "random_entry_test",
+          "overfitting_gap"
+        ],
+        "title": "BacktestResponse",
+        "type": "object"
+      },
+      "CreateRunRequest": {
+        "description": "Body of POST /runs.\n\n``asset`` must be a registered asset (see assets.py). ``population_size``\nis also the number of strategies the server generates.",
+        "properties": {
+          "asset": {
+            "title": "Asset",
+            "type": "string"
+          },
+          "elitism_count": {
+            "default": 2,
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Elitism Count",
+            "type": "integer"
+          },
+          "generations": {
+            "default": 50,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Generations",
+            "type": "integer"
+          },
+          "population_size": {
+            "default": 10,
+            "maximum": 200.0,
+            "minimum": 2.0,
+            "title": "Population Size",
+            "type": "integer"
+          },
+          "seed": {
+            "default": 0,
+            "title": "Seed",
+            "type": "integer"
+          },
+          "selection_pressure": {
+            "default": "tournament",
+            "title": "Selection Pressure",
+            "type": "string"
+          },
+          "slippage_bps": {
+            "default": 1.0,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Slippage Bps",
+            "type": "number"
+          },
+          "stop_loss_pct": {
+            "default": 0.0075,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Stop Loss Pct",
+            "type": "number"
+          },
+          "taker_fee_bps": {
+            "default": 10.0,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Taker Fee Bps",
+            "type": "number"
+          },
+          "target_pct": {
+            "default": 0.015,
+            "exclusiveMaximum": 1.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Target Pct",
+            "type": "number"
+          },
+          "trade_window_bars": {
+            "default": 96,
+            "maximum": 10000.0,
+            "minimum": 1.0,
+            "title": "Trade Window Bars",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "asset"
+        ],
+        "title": "CreateRunRequest",
+        "type": "object"
+      },
+      "CreateRunResponse": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "status_url": {
+            "title": "Status Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "status_url"
+        ],
+        "title": "CreateRunResponse",
+        "type": "object"
+      },
+      "GenerationDetailOut": {
+        "properties": {
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "strategies": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyOut"
+            },
+            "title": "Strategies",
+            "type": "array"
+          },
+          "train_metrics": {
+            "$ref": "#/components/schemas/GenerationMetricsOut"
+          },
+          "validation_metrics": {
+            "$ref": "#/components/schemas/GenerationMetricsOut"
+          }
+        },
+        "required": [
+          "run_id",
+          "number",
+          "train_metrics",
+          "validation_metrics",
+          "strategies"
+        ],
+        "title": "GenerationDetailOut",
+        "type": "object"
+      },
+      "GenerationMetricsOut": {
+        "properties": {
+          "max_fitness": {
+            "title": "Max Fitness",
+            "type": "number"
+          },
+          "mean_fitness": {
+            "title": "Mean Fitness",
+            "type": "number"
+          },
+          "median_fitness": {
+            "title": "Median Fitness",
+            "type": "number"
+          },
+          "n_strategies_with_trades": {
+            "title": "N Strategies With Trades",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_fitness",
+          "median_fitness",
+          "mean_fitness",
+          "n_strategies_with_trades"
+        ],
+        "title": "GenerationMetricsOut",
+        "type": "object"
+      },
+      "GenerationSummaryOut": {
+        "properties": {
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "train_metrics": {
+            "$ref": "#/components/schemas/GenerationMetricsOut"
+          },
+          "validation_metrics": {
+            "$ref": "#/components/schemas/GenerationMetricsOut"
+          }
+        },
+        "required": [
+          "number",
+          "train_metrics",
+          "validation_metrics"
+        ],
+        "title": "GenerationSummaryOut",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ManifestOut": {
+        "properties": {
+          "code_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Sha"
+          },
+          "config_snapshot": {
+            "additionalProperties": true,
+            "title": "Config Snapshot",
+            "type": "object"
+          },
+          "data_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Hash"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "test_window": {
+            "$ref": "#/components/schemas/WindowOut"
+          },
+          "train_window": {
+            "$ref": "#/components/schemas/WindowOut"
+          },
+          "validation_window": {
+            "$ref": "#/components/schemas/WindowOut"
+          }
+        },
+        "required": [
+          "seed",
+          "code_sha",
+          "data_hash",
+          "started_at",
+          "train_window",
+          "validation_window",
+          "test_window",
+          "config_snapshot"
+        ],
+        "title": "ManifestOut",
+        "type": "object"
+      },
+      "PerformanceMetricsOut": {
+        "properties": {
+          "avg_trade_duration_ns": {
+            "title": "Avg Trade Duration Ns",
+            "type": "integer"
+          },
+          "calmar": {
+            "title": "Calmar",
+            "type": "number"
+          },
+          "expectancy": {
+            "title": "Expectancy",
+            "type": "number"
+          },
+          "max_drawdown": {
+            "title": "Max Drawdown",
+            "type": "number"
+          },
+          "n_trades": {
+            "title": "N Trades",
+            "type": "integer"
+          },
+          "profit_factor": {
+            "title": "Profit Factor",
+            "type": "number"
+          },
+          "sharpe": {
+            "title": "Sharpe",
+            "type": "number"
+          },
+          "sortino": {
+            "title": "Sortino",
+            "type": "number"
+          },
+          "win_rate": {
+            "title": "Win Rate",
+            "type": "number"
+          }
+        },
+        "required": [
+          "n_trades",
+          "win_rate",
+          "profit_factor",
+          "expectancy",
+          "sharpe",
+          "sortino",
+          "calmar",
+          "max_drawdown",
+          "avg_trade_duration_ns"
+        ],
+        "title": "PerformanceMetricsOut",
+        "type": "object"
+      },
+      "RunDetailOut": {
+        "properties": {
+          "buy_and_hold_test": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "chosen_strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen Strategy Id"
+          },
+          "current_generation": {
+            "title": "Current Generation",
+            "type": "integer"
+          },
+          "generations": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationSummaryOut"
+            },
+            "title": "Generations",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/ManifestOut"
+          },
+          "overfitting_gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overfitting Gap"
+          },
+          "random_entry_test": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "test_metrics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "train_metrics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validation_metrics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PerformanceMetricsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "current_generation",
+          "manifest",
+          "generations",
+          "chosen_strategy_id",
+          "overfitting_gap",
+          "train_metrics",
+          "validation_metrics",
+          "test_metrics",
+          "buy_and_hold_test",
+          "random_entry_test"
+        ],
+        "title": "RunDetailOut",
+        "type": "object"
+      },
+      "RunSummaryOut": {
+        "properties": {
+          "chosen_strategy_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chosen Strategy Id"
+          },
+          "current_generation": {
+            "title": "Current Generation",
+            "type": "integer"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "overfitting_gap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overfitting Gap"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "current_generation",
+          "started_at",
+          "finished_at",
+          "seed",
+          "chosen_strategy_id",
+          "overfitting_gap"
+        ],
+        "title": "RunSummaryOut",
+        "type": "object"
+      },
+      "StrategyOut": {
+        "properties": {
+          "conjunctions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Conjunctions",
+            "type": "array"
+          },
+          "fitness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fitness"
+          },
+          "generation_number": {
+            "title": "Generation Number",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "indicators": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Indicators",
+            "type": "array"
+          },
+          "parsed_query": {
+            "title": "Parsed Query",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "generation_number",
+          "id",
+          "rank",
+          "fitness",
+          "indicators",
+          "conjunctions",
+          "parsed_query"
+        ],
+        "title": "StrategyOut",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WindowOut": {
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "WindowOut",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "gentrade",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/assets": {
+      "get": {
+        "operationId": "get_assets_assets_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AssetOut"
+                  },
+                  "title": "Response Get Assets Assets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Assets"
+      }
+    },
+    "/backtests": {
+      "post": {
+        "operationId": "post_backtest_backtests_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Backtest"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    },
+    "/runs": {
+      "get": {
+        "operationId": "get_runs_runs_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummaryOut"
+                  },
+                  "title": "Response Get Runs Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Runs"
+      },
+      "post": {
+        "operationId": "post_run_runs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Run"
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run"
+      }
+    },
+    "/runs/{run_id}/generations/{n}": {
+      "get": {
+        "operationId": "get_generation_runs__run_id__generations__n__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "n",
+            "required": true,
+            "schema": {
+              "title": "N",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Generation"
+      }
+    },
+    "/runs/{run_id}/strategies/{strategy_id}": {
+      "get": {
+        "operationId": "get_strategy_runs__run_id__strategies__strategy_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "strategy_id",
+            "required": true,
+            "schema": {
+              "title": "Strategy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategyOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Strategy"
+      }
+    }
+  }
+}

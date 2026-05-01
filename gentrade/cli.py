@@ -155,6 +155,45 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_show(args: argparse.Namespace) -> int:
+    """Print the headline metrics + per-generation curves for a persisted run."""
+    from sqlalchemy.orm import Session
+
+    from gentrade.persistence import RunRow
+
+    engine = init_db(args.db_url)
+    with Session(engine) as session:
+        row = session.get(RunRow, args.run_id)
+        if row is None:
+            print(f"run {args.run_id!r} not found", file=sys.stderr)
+            return 5
+        print(f"id              : {row.id}")
+        print(f"status          : {row.status}")
+        print(f"seed            : {row.seed}")
+        print(f"started_at      : {row.started_at}")
+        print(f"finished_at     : {row.finished_at or '-'}")
+        print(f"gen             : {row.current_generation}")
+        print(f"chosen_strategy : {row.chosen_strategy_id or '-'}")
+        print(
+            f"overfitting_gap : "
+            f"{row.overfitting_gap:.4f}" if row.overfitting_gap is not None else "-"
+        )
+        print(f"code_sha        : {row.code_sha or '-'}")
+        print(f"data_hash       : {row.data_hash or '-'}")
+        print()
+        if row.generations:
+            print("generation\ttrain_max\tval_max\ttrain_n_with_trades\tval_n_with_trades")
+            for g in sorted(row.generations, key=lambda x: x.number):
+                print(
+                    f"{g.number}\t"
+                    f"{g.train_max_fitness:+.4f}\t"
+                    f"{g.validation_max_fitness:+.4f}\t"
+                    f"{g.train_n_strategies_with_trades}\t"
+                    f"{g.validation_n_strategies_with_trades}"
+                )
+    return 0
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     bars = _load_bars(args.data)
     engine = init_db(args.db_url)
@@ -207,6 +246,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     list_p = sub.add_parser("list", help="list persisted runs")
     list_p.add_argument("--db-url", default=DEFAULT_DB_URL)
+
+    show_p = sub.add_parser("show", help="print headline metrics + per-gen curves for one run")
+    show_p.add_argument("run_id")
+    show_p.add_argument("--db-url", default=DEFAULT_DB_URL)
+    show_p.set_defaults(func=cmd_show)
     list_p.set_defaults(func=cmd_list)
 
     resume_p = sub.add_parser("resume", help="resume an interrupted run")
