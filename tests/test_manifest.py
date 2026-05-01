@@ -7,11 +7,17 @@ which fields are captured automatically and which the caller must supply.
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pandas as pd
 import pytest
 
-from gentrade.manifest import Manifest, capture_manifest
+from gentrade.manifest import (
+    Manifest,
+    capture_manifest,
+    compute_data_hash,
+    current_git_sha,
+)
 
 
 def _windows():
@@ -95,3 +101,98 @@ def test_manifest_default_config_snapshot_is_empty_dict():
         seed=0, train_window=train, validation_window=val, test_window=test
     )
     assert m.config_snapshot == {}
+
+
+# ---------------------------------------------------------------------------
+# code_sha
+# ---------------------------------------------------------------------------
+
+def _init_clean_repo(tmp_path):
+    """Init a temporary git repo with one committed file."""
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+    (tmp_path / "README").write_text("hello")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "initial"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )
+
+
+def test_current_git_sha_returns_head_on_clean_tree(tmp_path):
+    _init_clean_repo(tmp_path)
+    sha = current_git_sha(repo_root=tmp_path)
+    assert len(sha) == 40
+    # idempotent
+    assert current_git_sha(repo_root=tmp_path) == sha
+
+
+def test_current_git_sha_refuses_dirty_tree(tmp_path):
+    _init_clean_repo(tmp_path)
+    (tmp_path / "README").write_text("dirty")  # uncommitted change
+
+    with pytest.raises(RuntimeError, match="dirty"):
+        current_git_sha(repo_root=tmp_path)
+
+
+def test_current_git_sha_allows_dirty_when_explicit(tmp_path):
+    _init_clean_repo(tmp_path)
+    (tmp_path / "README").write_text("dirty")
+
+    sha = current_git_sha(repo_root=tmp_path, allow_dirty=True)
+    assert len(sha) == 40
+
+
+def test_current_git_sha_raises_outside_a_repo(tmp_path):
+    with pytest.raises(RuntimeError):
+        current_git_sha(repo_root=tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# data_hash
+# ---------------------------------------------------------------------------
+
+def _bars():
+    base = pd.Timestamp("2022-01-01", tz="UTC")
+    return pd.DataFrame(
+        {
+            "open_ts": [base + pd.Timedelta(minutes=15 * i) for i in range(5)],
+            "open": [100, 101, 102, 103, 104],
+            "high": [101, 102, 103, 104, 105],
+            "low": [99, 100, 101, 102, 103],
+            "close": [100.5, 101.5, 102.5, 103.5, 104.5],
+            "volume": [10, 11, 12, 13, 14],
+        }
+    )
+
+
+def test_compute_data_hash_is_deterministic():
+    a = compute_data_hash(_bars())
+    b = compute_data_hash(_bars())
+    assert a == b
+    assert len(a) == 64  # sha256 hex
+
+
+def test_compute_data_hash_changes_when_data_changes():
+    bars = _bars()
+    a = compute_data_hash(bars)
+    bars.iloc[0, bars.columns.get_loc("close")] = 999.0
+    b = compute_data_hash(bars)
+    assert a != b
+
+
+def test_compute_data_hash_ignores_indicator_columns():
+    """Adding a derived indicator column must not invalidate the data hash —
+    the data is the OHLCV; indicators are a function of it."""
+    bars = _bars()
+    a = compute_data_hash(bars)
+    bars["momentum_rsi"] = [50, 55, 60, 65, 70]
+    b = compute_data_hash(bars)
+    assert a == b

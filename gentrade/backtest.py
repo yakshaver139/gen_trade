@@ -53,7 +53,7 @@ class BacktestConfig:
     target_pct: float = 0.015
     stop_loss_pct: float = 0.0075
     trade_window_bars: int = 96
-    fee_bps: float = 10.0
+    taker_fee_bps: float = 10.0
     slippage_bps: float = 1.0
 
 
@@ -73,7 +73,7 @@ def simulate_trades(
             f"entry_signal length {sig.shape} does not match bars length ({n},)"
         )
 
-    fee_pct = cfg.fee_bps / 10_000.0
+    fee_pct = cfg.taker_fee_bps / 10_000.0
     slip = cfg.slippage_bps / 10_000.0
     rows: list[dict] = []
 
@@ -133,8 +133,8 @@ def simulate_trades(
                 "stop_loss_price": stop,
                 "outcome": outcome,
                 "return": net_return,
-                "entry_fee_bps": cfg.fee_bps,
-                "exit_fee_bps": cfg.fee_bps,
+                "entry_fee_bps": cfg.taker_fee_bps,
+                "exit_fee_bps": cfg.taker_fee_bps,
                 "slippage_bps": cfg.slippage_bps,
             }
         )

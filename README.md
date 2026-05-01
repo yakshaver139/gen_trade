@@ -129,8 +129,53 @@ uv run ruff check gentrade tests
 uv run ruff format gentrade tests
 ```
 
-## Status
+## What this does and doesn't claim
 
-This is a 2022 dissertation codebase under active revival. See [`PLAN.md`](PLAN.md) for the
-phased plan to take this to production. Phase 0 (revival) is complete; Phase 1 (modelling
-rigor) is the priority next.
+The original 2022 dissertation reported that GA-evolved strategies outperformed buy-and-hold
+on Bitcoin, with the candid caveat that "the alarming positivity of the results... hints that
+there could be a calculation error." The Phase 1 work is the audit of that claim.
+
+**What the current code does honestly:**
+
+- Backtests trades with realistic friction: per-side taker fees (10 bps default, Binance spot)
+  and slippage (1 bp default; bump for thin alts). See `gentrade/backtest.py`.
+- Enforces a single open position per strategy. Signals that fire while a trade is open are
+  ignored — the original code evaluated every signal independently, which double-counted
+  exposure and inflated fitness on clustered signals.
+- Splits market history into chronologically ordered train / validation / test windows.
+  Selection only ever sees train. Validation is re-evaluated every generation but never feeds
+  selection — it's there to detect when in-sample fitness diverges from out-of-sample.
+  Test is touched exactly once, at the end, to produce the final report.
+- Produces a `BacktestReport` with per-window metrics (Sharpe, Sortino, Calmar, max drawdown,
+  profit factor, win rate, expectancy, avg trade duration, n_trades) plus two test-window
+  baselines (buy-and-hold; random-entry with the same exposure) so the reader can judge
+  whether the strategy is doing meaningful work.
+- Tournament-of-3 selection by default (best-vs-median sampling ratio ≈ 4.4× for N=10),
+  replacing the original near-uniform `n + 1/(i+1)` formula that effectively randomised parent
+  selection.
+- Pins a regression suite (`tests/regression/`): a fixed seed + synthetic dataset produces a
+  fully-pinned report. Any change to selection / metrics / backtest / walk-forward must explain
+  its diff against the pinned numbers.
+
+**What the current code does NOT yet claim:**
+
+- The GA loop with the new engine has not yet been run on real Binance data end-to-end, so
+  the dissertation's outperformance claim has not yet been re-tested under realistic costs and
+  walk-forward windowing. Until it has, treat the original conclusion as unverified.
+- Indicator pre-computation has not been audited for look-ahead. Most `ta` library indicators
+  are causal (rolling-window, no centred mean), but the audit has not been completed and any
+  centred-window or full-series-normalised indicator would silently leak the future across the
+  train/validation boundary.
+- Strategy selection on the population is currently single-objective (per-trade expectancy with
+  a min-trades floor). The plan calls for multi-objective fitness (Sharpe + drawdown penalty +
+  trade count); not yet implemented.
+- No statistical-significance test (bootstrap p-values vs. random-entry / buy-and-hold) is
+  produced yet — the random-entry baseline ships, but a single seed isn't a confidence interval.
+- The legacy `genetic.main` and `run_strategy` paths are still present and still drive the smoke
+  test. They use the old no-friction, no-overlap-rule evaluator. Don't trust their numbers.
+- No paper trading. No live trading. No risk module.
+
+If you point money at this code in its current state, that's on you.
+
+See [`PLAN.md`](PLAN.md) for the phased plan. Phases 0 (revival) and 1 (modelling rigor) are
+complete; Phase 2 (persistence + job model) is in progress.

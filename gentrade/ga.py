@@ -138,8 +138,16 @@ def run_ga(
     config: GAConfig | None = None,
     backtest_config: BacktestConfig | None = None,
     seed: int = 0,
+    code_sha: str | None = None,
+    data_hash: str | None = None,
 ) -> RunResult:
-    """Run the GA end-to-end and return a fully-populated RunResult."""
+    """Run the GA end-to-end and return a fully-populated RunResult.
+
+    ``code_sha`` and ``data_hash`` are pass-through kwargs for the manifest;
+    callers that care about reproducibility (the CLI) compute them via
+    ``manifest.current_git_sha`` / ``manifest.compute_data_hash`` and pass
+    them in. Tests can leave them None.
+    """
     cfg = config or GAConfig()
     bt_cfg = backtest_config or BacktestConfig()
 
@@ -160,6 +168,8 @@ def run_ga(
             "ga": asdict(cfg),
             "backtest": asdict(bt_cfg),
         },
+        code_sha=code_sha,
+        data_hash=data_hash,
     )
 
     strategies: list[dict] = list(initial_strategies)

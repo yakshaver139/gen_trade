@@ -33,7 +33,7 @@ BT_CFG = BacktestConfig(
     target_pct=0.015,
     stop_loss_pct=0.0075,
     trade_window_bars=4,
-    fee_bps=10.0,
+    taker_fee_bps=10.0,
     slippage_bps=1.0,
 )
 

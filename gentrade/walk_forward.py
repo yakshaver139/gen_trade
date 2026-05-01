@@ -104,7 +104,7 @@ def buy_and_hold_trades(bars: pd.DataFrame, config: BacktestConfig) -> pd.DataFr
             ]
         )
     slip = config.slippage_bps / 10_000.0
-    fee_pct = config.fee_bps / 10_000.0
+    fee_pct = config.taker_fee_bps / 10_000.0
 
     first, last = bars.iloc[0], bars.iloc[-1]
     entry_price = float(first["open"]) * (1 + slip)
@@ -123,8 +123,8 @@ def buy_and_hold_trades(bars: pd.DataFrame, config: BacktestConfig) -> pd.DataFr
                 "stop_loss_price": math.nan,
                 "outcome": "BUY_AND_HOLD",
                 "return": net_return,
-                "entry_fee_bps": config.fee_bps,
-                "exit_fee_bps": config.fee_bps,
+                "entry_fee_bps": config.taker_fee_bps,
+                "exit_fee_bps": config.taker_fee_bps,
                 "slippage_bps": config.slippage_bps,
             }
         ]

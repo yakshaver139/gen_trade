@@ -70,6 +70,8 @@ enum TradeOutcome {
     stopped_out             -- price hit the stop loss inside the window
     no_close_in_window      -- neither threshold reached before the window ended
     no_entries              -- the strategy produced no entries at all
+    buy_and_hold            -- a baseline single-position window-end-to-end trade,
+                            -- emitted only by the BacktestReport baseline path
 }
 
 -- Which fitness function is used to score a strategy in a given run.
@@ -125,19 +127,22 @@ value Signal {
 
 -- A single backtested trade attempt: entry at a bar, run for the trade
 -- window, classify by which threshold (target or stop) was reached first.
--- Fees and slippage are recorded per-trade so that fitness functions and
--- BacktestReport metrics can subtract realistic costs rather than treat
--- every entry/exit as frictionless.
+-- Fees and slippage are recorded as basis-point rates (not absolute
+-- amounts) so the report stays scale-invariant — a trade carries the
+-- bps it was charged at; absolute cost in account currency is derived
+-- from buy_amount * bps / 10_000 wherever it's needed.
 value Trade {
     entry_time: Timestamp
     entry_price: Decimal
+    exit_time: Timestamp
+    exit_price: Decimal
     target_price: Decimal
     stop_loss_price: Decimal
     outcome: TradeOutcome
     performance: Decimal
-    entry_fee: Decimal
-    exit_fee: Decimal
-    slippage: Decimal
+    entry_fee_bps: Decimal
+    exit_fee_bps: Decimal
+    slippage_bps: Decimal
 }
 
 -- A half-open chronological window. Used to carve a MarketHistory into
@@ -655,14 +660,16 @@ rule ScoreStrategy {
         -- simple_profit(backtest, buy_amount, target, stop): for each
         -- closed trade compute the realised P&L from buy_amount and the
         -- trade's outcome (target gain on target_hit, stop loss on
-        -- stopped_out), then subtract that trade's entry_fee, exit_fee
-        -- and slippage. Sum across closed trades. The per-trade cost
-        -- model is populated by simulate_trade using the run's
-        -- taker_fee_bps and slippage_bps config: each side incurs
-        -- buy_amount * fee_bps / 10_000, slippage adjusts the realised
-        -- entry/exit prices in the adverse direction. log_increase and
-        -- win_weighted likewise read t.performance, which simulate_trade
-        -- already computes net of fees and slippage.
+        -- stopped_out), then subtract that trade's friction costs:
+        -- buy_amount * (entry_fee_bps + exit_fee_bps) / 10_000 plus the
+        -- slippage adjustment baked into entry_price and exit_price. Sum
+        -- across closed trades. simulate_trade populates
+        -- entry_fee_bps/exit_fee_bps from config.taker_fee_bps and
+        -- slippage_bps from config.slippage_bps, applying slippage
+        -- adversely (entry pays slightly more, exit receives slightly
+        -- less). log_increase and win_weighted likewise read
+        -- t.performance, which simulate_trade already computes net of
+        -- fees and slippage.
 }
 
 -- Build the next generation from the current one: keep the elite,
