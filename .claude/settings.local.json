@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/joshharrison/.claude/plugins/cache/juxt-plugins/allium/346440ca338c/**)",
+      "Bash(/Users/joshharrison/Documents/personal_projects/gen_trade/.venv/bin/python --version)",
+      "Bash(poetry --version)",
+      "Bash(poetry env *)",
+      "Bash(uv --version)",
+      "Bash(git worktree *)",
+      "Read(//Users/joshharrison/Documents/personal_projects/gen_trade.phase0/**)",
+      "Bash(mkdir -p gentrade tests data signals)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 *)",
+      "Bash(uv python *)",
+      "Bash(uv sync *)",
+      "Bash(uv run *)",
+      "Bash(unset VIRTUAL_ENV)"
+    ]
+  }
+}

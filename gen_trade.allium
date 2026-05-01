@@ -1,0 +1,508 @@
+-- allium: 2
+-- gen_trade.allium
+--
+-- Genetic algorithm that evolves technical-indicator-based trading
+-- strategies against historical Bitcoin price data.
+--
+-- Scope:
+--   Includes: Run, Generation, Strategy, Signal, Backtest, Trade, FitnessReport,
+--             selection, crossover, mutation, elitism.
+--   Excludes:
+--     - Historical price ingestion from Binance (data source, treat as external).
+--     - Computation of TA indicator columns (delegated to the `ta` library).
+--     - DataFrame backend choice (pandas vs dask), multiprocessing, S3 persistence,
+--       Docker / IaC packaging — all infrastructure, not domain.
+--     - Post-hoc analysis / plotting in evaluation.py.
+--     - The legacy class-based shape in strategy.py (superseded by dict shape).
+--     - PMX crossover (defined but unused; PPX is the live operator).
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- A bar of OHLCV price data with pre-computed technical indicator columns.
+-- Sourced from a market data feed (Binance) and prepared by the `ta` library
+-- before the GA runs.
+external entity MarketBar {
+    open_time: Timestamp
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    trend_direction: up | down | no_trend
+}
+
+-- The ordered series of MarketBars the GA evaluates strategies against.
+external entity MarketHistory {
+    symbol: String
+    bar_interval: Duration
+    bars: List<MarketBar>
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- Each TA indicator belongs to one class. Strategies are constrained to
+-- limit how many signals from a single class can be combined, to discourage
+-- redundant signal stacking.
+enum SignalClass { momentum | trend | volatility | volume }
+
+-- Comparison operator used by a signal to test the indicator value.
+enum SignalOp { gte | lte }
+
+-- Boolean conjunction joining adjacent signals in a strategy expression.
+-- Although the broader language allows negations, the live algorithm uses
+-- only the two non-negating forms.
+enum Conjunction { and_ | or_ }
+
+-- A relative comparison points the indicator at another series rather than
+-- a fixed number. previous_period compares to the bar before; moving_average
+-- compares to the slow simple moving average; sibling_indicator compares to
+-- a different named indicator series.
+enum RelativeReference { previous_period | moving_average | sibling_indicator }
+
+-- Outcome of a single backtested trade window.
+enum TradeOutcome {
+    target_hit              -- price reached the profit target inside the window
+    stopped_out             -- price hit the stop loss inside the window
+    no_close_in_window      -- neither threshold reached before the window ended
+    no_entries              -- the strategy produced no entries at all
+}
+
+-- Which fitness function is used to score a strategy in a given run.
+enum FitnessFunction {
+    profit_simple           -- fitness = simulated profit/loss in account units
+    log_increase            -- Ha & Moon log-return based fitness
+    win_weighted            -- avg_gain * (win_percent * n_trades)
+}
+
+enum RunStatus { in_progress | completed }
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+-- A single comparison expression like "trend_sma_fast >= 0.7" or
+-- "volume_mfi <= volume_mfi_previous". Signals are the genes that make up
+-- a strategy chromosome.
+value Signal {
+    indicator_name: String
+    class: SignalClass
+    op: SignalOp
+    is_absolute: Boolean
+    abs_value: Decimal?
+    rel_value: RelativeReference?
+    rel_target: String?
+
+    invariant AbsoluteHasValue {
+        is_absolute implies abs_value != null
+    }
+    invariant RelativeHasReference {
+        not is_absolute implies rel_value != null
+    }
+    invariant SiblingHasTarget {
+        rel_value = sibling_indicator implies rel_target != null
+    }
+}
+
+-- A single backtested trade attempt: entry at a bar, run for the trade
+-- window, classify by which threshold (target or stop) was reached first.
+value Trade {
+    entry_time: Timestamp
+    entry_price: Decimal
+    target_price: Decimal
+    stop_loss_price: Decimal
+    outcome: TradeOutcome
+    performance: Decimal
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- One execution of the genetic algorithm: a starting population evolves
+-- over a fixed number of generations against a single MarketHistory using
+-- a chosen fitness function. Producing the ranked final population is the
+-- goal of a Run.
+entity Run {
+    started_at: Timestamp
+    finished_at: Timestamp?
+    market: MarketHistory
+    fitness_function: FitnessFunction
+    population_size: Integer
+    max_generations: Integer
+    status: RunStatus
+
+    generations: Generation with run = this
+
+    current_generation: generations where status != bred
+    is_complete: generations.count >= max_generations
+}
+
+-- A single iteration of the GA loop. Owns its population of strategies and,
+-- once evaluated, ranks them so the next Generation can be bred.
+entity Generation {
+    run: Run
+    number: Integer
+    status: pending_evaluation | evaluated | bred
+
+    strategies: Strategy with generation = this
+    fitness_reports: FitnessReport with generation = this
+
+    ranked_reports: fitness_reports where fitness != null
+    is_evaluated: strategies.all(s => s.evaluation != null)
+}
+
+-- A trading strategy is a chromosome: an ordered list of Signals joined by
+-- conjunctions to form a compound boolean expression. A bar is an entry
+-- point when the expression is true on that bar.
+entity Strategy {
+    generation: Generation
+    signals: List<Signal>
+    conjunctions: List<Conjunction>
+
+    evaluation: Backtest with strategy = this
+
+    invariant ConjunctionCardinality {
+        conjunctions.count = signals.count - 1
+    }
+    invariant SignalCountInRange {
+        signals.count >= config.min_signals
+        and signals.count <= config.max_signals
+    }
+    invariant SameClassLimit {
+        for class in {momentum, trend, volatility, volume}:
+            (signals where class = class).count <= config.max_same_class_signals
+    }
+    -- The first conjunction is forced to `and_` to keep the parsed
+    -- expression well-formed once disjunctions are parenthesised.
+    invariant FirstConjunctionIsAnd {
+        conjunctions.count > 0 implies conjunctions.first = and_
+    }
+}
+
+-- The result of running one Strategy over the entire MarketHistory: every
+-- entry point produces a Trade, classified by what happened in the
+-- following trade window.
+entity Backtest {
+    strategy: Strategy
+    trades: List<Trade>
+    trade_percent: Decimal      -- entries / total_bars
+
+    n_entries: trades.count
+    is_too_noisy: trade_percent >= config.entry_cutoff_percent
+}
+
+-- Per-strategy summary used for selection. Produced by applying the run's
+-- fitness_function to a Backtest. fitness drives ranking; n_trades and
+-- win_percent are diagnostic.
+entity FitnessReport {
+    generation: Generation
+    strategy: Strategy
+    n_trades: Integer
+    win_percent: Decimal
+    avg_gain: Decimal
+    fitness: Decimal
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Risk:reward 2:1 — target is twice the stop loss.
+    target_profit: Decimal = 0.015
+    stop_loss: Decimal = 0.0075
+
+    -- Trades are held open for one fixed window before being closed
+    -- regardless of outcome. 15-minute bars, 96 bars = 1 day.
+    trade_window: Duration = 1.day
+
+    -- Strategies that fire on more than a third of bars are treated as
+    -- noise rather than signal and given no_entries fitness.
+    entry_cutoff_percent: Decimal = 0.333
+
+    -- Genetic algorithm shape.
+    population_size: Integer = 10
+    max_generations: Integer = 100
+
+    -- Strategy chromosome shape.
+    min_signals: Integer = 2
+    max_signals: Integer = 4
+    max_same_class_signals: Integer = 2
+
+    -- Mutation perturbs an absolute signal threshold by a random factor in
+    -- [-mutation_range, +mutation_range].
+    mutation_range: Decimal = 0.20
+
+    -- Top N strategies copied unchanged into the next generation.
+    elitism_count: Integer = 2
+
+    -- Notional per-trade capital used by the simple-profit fitness.
+    buy_amount: Decimal = 1000
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule StartRun {
+    when: OperatorStartsRun(market, fitness_function, population_size, max_generations)
+
+    requires: population_size > 0
+    requires: max_generations > 0
+    requires: population_size >= config.elitism_count
+
+    ensures:
+        let run = Run.created(
+            started_at: now,
+            market: market,
+            fitness_function: fitness_function,
+            population_size: population_size,
+            max_generations: max_generations,
+            status: in_progress
+        )
+        let gen = Generation.created(
+            run: run,
+            number: 1,
+            status: pending_evaluation
+        )
+        for _ in 1..population_size:
+            GenerateRandomStrategy(generation: gen)
+}
+
+-- Produces one fresh Strategy for the target generation. Picks a random
+-- base signal then keeps adding signals (and conjunctions) up to a random
+-- length, while respecting the same-class cap.
+rule GenerateRandomStrategy {
+    when: GenerateRandomStrategy(generation)
+
+    ensures:
+        Strategy.created(
+            generation: generation,
+            signals: pick_signals(
+                config.min_signals,
+                config.max_signals,
+                config.max_same_class_signals
+            ),
+            conjunctions: pick_conjunctions(signals.count - 1)
+        )
+
+    @guidance
+        -- pick_signals samples from the available Signal catalogue with
+        -- rejection of any class once max_same_class_signals is reached.
+        -- pick_conjunctions chooses {and_, or_} per slot then forces
+        -- conjunctions[0] = and_ for parenthesisation correctness.
+}
+
+-- Once every Strategy in the current Generation has been backtested and
+-- scored, the generation is ready to breed the next.
+rule EvaluateGeneration {
+    when: gen: Generation.is_evaluated
+
+    requires: gen.status = pending_evaluation
+
+    ensures: gen.status = evaluated
+    ensures:
+        if gen.number >= gen.run.max_generations:
+            gen.run.status = completed
+            gen.run.finished_at = now
+        else:
+            BreedNextGeneration(generation: gen)
+}
+
+-- Backtest a single strategy against the run's market history. Produces a
+-- Backtest with one Trade per entry point, plus a FitnessReport scored by
+-- the run's chosen fitness function.
+rule BacktestStrategy {
+    when: strategy: Strategy.created
+
+    let market = strategy.generation.run.market
+    let entries = bars_matching_strategy(market, strategy)
+    let percent = entries.count / market.bars.count
+
+    ensures:
+        let backtest = Backtest.created(
+            strategy: strategy,
+            trade_percent: percent,
+            trades:
+                if percent >= config.entry_cutoff_percent:
+                    [ Trade{ outcome: no_entries, performance: 0, ... } ]
+                else if entries.count = 0:
+                    [ Trade{ outcome: no_entries, performance: 0, ... } ]
+                else:
+                    entries.map(e => simulate_trade(e, market))
+        )
+        ScoreStrategy(strategy: strategy, backtest: backtest)
+}
+
+-- Compute the FitnessReport for a backtest. The shape of `fitness` depends
+-- on which FitnessFunction the run is using. Strategies that produced no
+-- valid trades are penalised heavily so they cannot be selected as parents.
+rule ScoreStrategy {
+    when: ScoreStrategy(strategy, backtest)
+
+    let n = backtest.trades where outcome in {target_hit, stopped_out}
+    let wins = backtest.trades where outcome = target_hit
+    let win_pct = if n.count > 0: wins.count / n.count else: 0
+    let avg = if n.count > 0: backtest.trades.avg(t => t.performance) else: 0
+
+    let fitness =
+        if n.count = 0:
+            -1000
+        else if strategy.generation.run.fitness_function = profit_simple:
+            simple_profit(backtest, config.buy_amount, config.target_profit, config.stop_loss)
+        else if strategy.generation.run.fitness_function = log_increase:
+            backtest.trades.avg(t => log_return(t, n.count))
+        else:
+            avg * (win_pct * n.count)
+
+    ensures:
+        FitnessReport.created(
+            generation: strategy.generation,
+            strategy: strategy,
+            n_trades: n.count,
+            win_percent: win_pct * 100,
+            avg_gain: avg,
+            fitness: fitness
+        )
+}
+
+-- Build the next generation from the current one: keep the elite,
+-- weighted-sample parents from the rest, apply PPX crossover, then mutate
+-- each child.
+rule BreedNextGeneration {
+    when: BreedNextGeneration(generation)
+
+    requires: generation.status = evaluated
+    requires: generation.number < generation.run.max_generations
+
+    let ranked = generation.fitness_reports
+                   .sort_by(r => r.fitness, descending)
+
+    ensures:
+        let next_gen = Generation.created(
+            run: generation.run,
+            number: generation.number + 1,
+            status: pending_evaluation
+        )
+        generation.status = bred
+
+        -- Elitism: top N copied unchanged.
+        for elite in ranked.take(config.elitism_count):
+            CloneStrategy(strategy: elite.strategy, into: next_gen)
+
+        -- Fill the rest by breeding pairs sampled with rank-based weights.
+        for _ in 1..(generation.run.population_size - config.elitism_count):
+            BreedChildStrategy(parents_pool: ranked, into: next_gen)
+}
+
+-- Copy a strategy into a new generation without modification.
+rule CloneStrategy {
+    when: CloneStrategy(strategy, into)
+
+    ensures:
+        Strategy.created(
+            generation: into,
+            signals: strategy.signals,
+            conjunctions: strategy.conjunctions
+        )
+}
+
+-- Sample two distinct parents (rank-weighted), perform PPX crossover,
+-- then apply mutation to the offspring.
+rule BreedChildStrategy {
+    when: BreedChildStrategy(parents_pool, into)
+
+    let parents = sample_distinct_pair(parents_pool, rank_weights(parents_pool))
+    let crossed = ppx_crossover(parents.first.strategy, parents.second.strategy)
+    let mutated = mutate_strategy(crossed, config.mutation_range)
+
+    ensures:
+        Strategy.created(
+            generation: into,
+            signals: mutated.signals,
+            conjunctions: mutated.conjunctions
+        )
+
+    @guidance
+        -- ppx_crossover (Precedence Preservative Crossover): build a child
+        -- of length max(|p1|, |p2|) by choosing, at each position, which
+        -- parent to draw from (uniform 0/1); fall back to the other parent
+        -- if the chosen one has run out of signals; skip duplicates.
+        --
+        -- rank_weights: weight_i = N + 1 / (i + 1) for rank i. Higher-
+        -- ranked strategies are sampled disproportionately as parents.
+        --
+        -- mutate_strategy: choose one absolute signal at random, multiply
+        -- its abs_value by (1 + delta) where delta is uniform in
+        -- [-mutation_range, +mutation_range]. Relative-only strategies are
+        -- left unchanged by mutation.
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+-- A run's generations are numbered 1..max_generations contiguously.
+invariant ContiguousGenerations {
+    for run in Runs:
+        for g in run.generations:
+            g.number >= 1 and g.number <= run.max_generations
+}
+
+-- Every evaluated generation has exactly one FitnessReport per Strategy.
+invariant FitnessReportPerStrategy {
+    for gen in Generations:
+        gen.status in {evaluated, bred}
+            implies gen.strategies.all(s => s.evaluation != null
+                and gen.fitness_reports.any(r => r.strategy = s))
+}
+
+-- Stop loss is half the target — risk:reward 2:1 holds by construction.
+invariant RiskRewardRatio {
+    config.target_profit = 2 * config.stop_loss
+}
+
+-- A trade window's target/stop are always on the correct side of entry.
+invariant TradeThresholdsConsistent {
+    for trade in Trades:
+        trade.target_price > trade.entry_price
+        and trade.stop_loss_price < trade.entry_price
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "Trade overlap: should the engine prevent a new trade from
+opening while an earlier trade window is still active for the same
+strategy? The current code evaluates every entry independently."
+
+open question "Generation 0 vs 1 numbering: should the seeded population
+be generation 0 (the input to the first GA step) or generation 1 (the
+first to be ranked)? The code uses 1-indexed generations."
+
+open question "Strategy uniqueness: nothing prevents the same chromosome
+from appearing twice in a population, either via random generation or as
+the offspring of crossover. Should duplicates be rejected to preserve
+search diversity, or kept to reflect convergence?"
+
+open question "Fitness penalty for noisy strategies: currently a strategy
+above the entry_cutoff_percent gets a single no_entries trade and
+fitness -1000. Is this severe enough that they cannot survive elitism in
+edge cases (e.g. an entire population fails)?"
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+-- The signal catalogue (which TA indicators are eligible, which threshold
+-- values are paired with each, which RelativeReferences apply) is defined
+-- by the seed JSON files (signals/absolute_signals.json,
+-- signals/relative_signals.json) and the indicator-class derivation in
+-- generate_blank_signals.py.
+deferred SignalCatalogue.absolute_signals
+deferred SignalCatalogue.relative_signals
