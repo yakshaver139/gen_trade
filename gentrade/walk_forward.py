@@ -23,7 +23,8 @@ the goal.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -39,7 +40,14 @@ from gentrade.metrics import (
 
 @dataclass(frozen=True)
 class BacktestReport:
-    """Single-strategy report mirroring the spec's BacktestReport entity."""
+    """Single-strategy report mirroring the spec's BacktestReport entity.
+
+    `per_generation` carries the in-sample-vs-validation curves so the
+    divergence can be plotted from a single artefact. It defaults to an
+    empty list when the report is built from `produce_backtest_report`
+    standalone (no GA loop ran), and is populated by `run_ga` from its
+    accumulated per-generation snapshots.
+    """
 
     chosen_strategy_id: str
     train_metrics: PerformanceMetrics
@@ -48,6 +56,7 @@ class BacktestReport:
     buy_and_hold_test: PerformanceMetrics
     random_entry_test: PerformanceMetrics
     overfitting_gap: float
+    per_generation: list[Any] = field(default_factory=list)
 
 
 def slice_window(
@@ -168,11 +177,19 @@ def produce_backtest_report(
     config: BacktestConfig | None = None,
     seed: int = 0,
     periods_per_year: int = DEFAULT_PERIODS_PER_YEAR,
+    per_generation: list[Any] | None = None,
+    overfitting_gap: float | None = None,
 ) -> BacktestReport:
     """Produce a single-strategy walk-forward report.
 
     ``bars`` must have indicator + ``_previous`` columns already populated.
     ``seed`` drives the random-entry baseline RNG for reproducibility.
+
+    ``per_generation`` and ``overfitting_gap`` are caller-supplied when the
+    GA loop has population-level data (preferred for spec compliance —
+    overfitting gap is defined on max_fitness across the final generation).
+    When omitted, the report is computed from the chosen strategy alone:
+    per_generation is empty and overfitting_gap is the expectancy delta.
     """
     cfg = config or BacktestConfig()
 
@@ -198,6 +215,12 @@ def produce_backtest_report(
         periods_per_year=periods_per_year,
     )
 
+    gap = (
+        overfitting_gap
+        if overfitting_gap is not None
+        else compute_overfitting_gap(train_m, val_m)
+    )
+
     return BacktestReport(
         chosen_strategy_id=chosen_strategy["id"],
         train_metrics=train_m,
@@ -205,5 +228,6 @@ def produce_backtest_report(
         test_metrics=test_m,
         buy_and_hold_test=bh_test,
         random_entry_test=random_test,
-        overfitting_gap=compute_overfitting_gap(train_m, val_m),
+        overfitting_gap=gap,
+        per_generation=list(per_generation) if per_generation else [],
     )
