@@ -45,10 +45,10 @@ def generate_trends(df: pd.DataFrame, periods: int=96):
     """Yield data from the trend window. NB 96 = one day of 15 minute periods"""
     yield from df[:periods]
 
-def main():
-    df = pd.read_csv('BTCUSDC.csv')
-    df['trend_direction'] = df.apply(lambda x: trend_direction(x), axis=1)
-    df.to_csv('BTCUSDC_indicators.csv')
+def main(in_path: str = "BTCUSDC.csv", out_path: str = "BTCUSDC_indicators.csv") -> None:
+    df = pd.read_csv(in_path)
+    df["trend_direction"] = df.apply(trend_direction, axis=1)
+    df.to_csv(out_path)
 
 if __name__ == "__main__":
     main()

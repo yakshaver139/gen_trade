@@ -14,7 +14,8 @@
 --       Docker / IaC packaging — all infrastructure, not domain.
 --     - Post-hoc analysis / plotting in evaluation.py.
 --     - The legacy class-based shape in strategy.py (superseded by dict shape).
---     - PMX crossover (defined but unused; PPX is the live operator).
+--     - PMX crossover (historically present but removed in Phase 0; PPX is
+--       the live operator).
 
 ------------------------------------------------------------
 -- External Entities

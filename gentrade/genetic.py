@@ -1,91 +1,56 @@
-from copy import deepcopy
 import json
-
 import os
 import random
-from typing import Callable, Dict, Iterable, List, Tuple
+from collections.abc import Callable
+from copy import deepcopy
 
-from generate_strategy import LOADED_INDICATORS, make_strategy_from_indicators
 import arrow
 import pandas as pd
-from df_adapter import dfa
-from generate_strategy import main as generate_main
-from generate_strategy import generate
-from generate_blank_signals import INDICATORS
-from run_strategy import run_strategy
 
-from async_caller import process_future_caller
-from helpers import make_pandas_df, write_df_to_s3, base_arg_parser
-from logger import get_logger
-from env import POPULATION_SIZE, MAX_GENERATIONS
-from fitness_functions import (
+from gentrade.async_caller import process_future_caller
+from gentrade.df_adapter import dfa
+from gentrade.env import MAX_GENERATIONS, POPULATION_SIZE
+from gentrade.fitness_functions import (
     fitness_function_ha_and_moon,
     fitness_function_original,
     fitness_simple_profit,
 )
-
-"""
-# Test run:
-# population size 10,
-# 100 generations
-#
-# runtime: 21037 seconds
-
-# risk:reward ratio 2:1
-
-# Second test run
-# 2022-08-21 15:19:05,962
-# INFO:Finished in 13753 seconds
-# 100 generations
-
-# third run
-# 2022-08-21T18:33:01.133223+00:00_results.csv
-# Finished in 63173 seconds
-# 500 generations
-# population size 10
-
-run 4: after removing negation conjunctions
-running with dask locally
-original FF
-2022-08-23T13:36:00.298698+00:00_results.csv
-INFO:Finished in 34164 seconds
-
-run 4: after removing negation conjunctions
-no dask locally
-profit FF
-2022-08-27 02:16:16,847INFO:Finished in 8977 seconds
-
-2022-08-27 10:22:12,408INFO:Population created
-2022-08-27 10:22:25,388INFO:Finished in 1465 seconds
-BUCKET=b poetry run python genetic.py  --write_local=True --generations=10 --population_size=100 --fitness_function=p
-
-"""
+from gentrade.generate_blank_signals import indicators_from_df
+from gentrade.generate_strategy import (
+    main as generate_main,
+)
+from gentrade.generate_strategy import (
+    make_strategy_from_indicators,
+)
+from gentrade.helpers import base_arg_parser, make_pandas_df, write_df_to_s3
+from gentrade.logger import get_logger
+from gentrade.run_strategy import run_strategy
 
 
-def load_df():
-    df = dfa.read_csv("BTCUSDC_indicators.csv")
+def load_df(path: str = "BTCUSDC_indicators.csv"):
+    df = dfa.read_csv(path)
     return add_previous_window_values(df)
 
 
-def add_previous_window_values(df: dfa.DataFrame) -> dfa.DataFrame:
-    # shift the whole df back one place
+def add_previous_window_values(df):
+    """For each indicator column, add a ``<col>_previous`` column shifted by one bar."""
     shifted = df.shift(1)
-    for ind in INDICATORS:
+    for ind in indicators_from_df(df):
         df[f"{ind}_previous"] = shifted[ind]
     return df
 
 
 def main(
-    trading_data: dfa.DataFrame,
-    strategies: List[Dict] = None,
-    fitness_function: Callable = None,
+    trading_data,
+    strategies: list[dict] | None = None,
+    fitness_function: Callable | None = None,
     generation: int = 1,
     max_generations: int = MAX_GENERATIONS,
-    ranked_results: List = None,
+    ranked_results: list | None = None,
     serial_debug: bool = False,
     population_size: int = POPULATION_SIZE,
-    save_options: Dict = None
-):
+    save_options: dict | None = None,
+) -> list:
     """Main Genetic Algorithm. Logic:
 
     1. Subset the dataframe by the strategy (for each strategy)
@@ -101,6 +66,7 @@ def main(
     8. rank the solutions and return the best
     """
     ranked_results = ranked_results or []
+    save_options = save_options or {}
     logger = get_logger(__name__)
 
     if generation <= max_generations:
@@ -137,7 +103,7 @@ def main(
                      f"_{population_size}_{generation}.csv")
             save_data(fname, ranking, **save_options)
 
-        logger.info(f"RECURSSING!")
+        logger.info("Recursing into next generation")
 
         population = generate_population(ranking, weights, population_size)
         main(
@@ -154,18 +120,21 @@ def main(
     return ranked_results
 
 
-def apply_ranking(results: Tuple) -> Tuple[pd.DataFrame, Dict]:
+def apply_ranking(results) -> tuple[pd.DataFrame, dict]:
     df = pd.concat(results)
     df.sort_values(by="fitness", ascending=False, inplace=True)
     n_items = len(df)
-    # nb +1 to avoid divide by zero
+    # NOTE: this formula evaluates to ``n_items + (1 / (i + 1))`` due to operator
+    # precedence — selection pressure is therefore close to uniform. This is a
+    # known bug, kept as-is in Phase 0 to preserve historic behaviour. Phase 1
+    # will replace with deliberate rank-weighted selection.
     weights = {df.iloc[i].strategy["id"]: n_items + 1 / (i + 1) for i in range(n_items)}
     return df, weights
 
 
 def generate_population(
-    ranked: dfa.DataFrame, weights: Dict, population_size: int = POPULATION_SIZE
-) -> List[Dict]:
+    ranked: pd.DataFrame, weights: dict, population_size: int = POPULATION_SIZE
+) -> list[dict]:
     """Applies ranking, cross over and mutation to create a new population"""
     # Elitism - keep the two best solutions from the previous population
 
@@ -186,10 +155,12 @@ def generate_population(
 
 
 def select_parents(
-    ranked: dfa.DataFrame, _weights: Dict, parents: Dict = {}
-) -> Tuple[dfa.DataFrame, dfa.DataFrame]:
-    """Randomly sample parents to use for offspring generation"""
-    sampled = ranked.sample(2, weights=_weights.values())
+    ranked: pd.DataFrame, _weights: dict, parents: dict | None = None
+) -> tuple:
+    """Randomly sample two distinct parents (rank-weighted) for offspring generation."""
+    if parents is None:
+        parents = {}
+    sampled = ranked.sample(2, weights=list(_weights.values()))
 
     x, y = sampled.iloc[0], sampled.iloc[1]
     if (x.id, y.id) in parents:
@@ -199,7 +170,7 @@ def select_parents(
     return x, y
 
 
-def cross_over_ppx(strat_x: Dict, strat_y: Dict) -> Dict:
+def cross_over_ppx(strat_x: dict, strat_y: dict) -> dict:
     """Precedence preservative crossover"""
     x_ind = strat_x["indicators"]
     y_ind = strat_y["indicators"]
@@ -222,51 +193,7 @@ def cross_over_ppx(strat_x: Dict, strat_y: Dict) -> Dict:
     return make_strategy_from_indicators(offspring)
 
 
-def cross_over_pmx(strat_x: Dict, strat_y: Dict) -> Tuple[Dict, Dict]:
-    """Partially matched cross over (PMX)."""
-    logger = get_logger(__name__)
-
-    x_ind = strat_x["indicators"]
-    y_ind = strat_y["indicators"]
-
-    pmx_inheritence_range = min(len(x_ind), len(y_ind))
-    pmx_inheritence_ix = random.randint(0, pmx_inheritence_range)
-
-    base_indicator = random.choice(LOADED_INDICATORS)
-
-    logger.info(f"Creating child using {base_indicator}")
-
-    child_x = generate(base_indicator, LOADED_INDICATORS)
-    child_y = generate(base_indicator, LOADED_INDICATORS)
-
-    # Select the genes to carry through to the next generation
-    x_inherited_gene = x_ind[pmx_inheritence_ix]
-    y_inherited_gene = y_ind[pmx_inheritence_ix]
-
-    child_x_inds = child_x["indicators"]
-    child_y_inds = child_y["indicators"]
-
-    # Select the position in which to place the inherited genes
-    pmx_cross_over_range = min(
-        max(len(child_x_inds) - 1, 0), max(len(child_y_inds) - 1, 0)
-    )
-    pmx_cross_over_ix = random.randint(0, pmx_cross_over_range)
-
-    logger.info(
-        f"child_x to inherit: {x_inherited_gene} in position {pmx_cross_over_ix}"
-    )
-    logger.info(
-        f"child_y to inherit: {y_inherited_gene} in position {pmx_cross_over_ix}"
-    )
-
-    # Mutate the offspring
-    child_x_inds[pmx_cross_over_ix] = x_inherited_gene
-    child_y_inds[pmx_cross_over_ix] = y_inherited_gene
-
-    return child_x, child_y
-
-
-def mutate(strategy: List):
+def mutate(strategy: dict) -> dict:
     _strat = deepcopy(strategy)
     abs_strats = [x for x in _strat["indicators"] if x["absolute"]]
 
@@ -279,32 +206,6 @@ def mutate(strategy: List):
     return _strat
 
 
-def is_profitable(
-    max_profit: float,
-    max_loss: float,
-    high_timestamp: pd.Timestamp,
-    low_timestamp: pd.Timestamp,
-) -> bool:
-    """Is the profitable high point before the max loss occurred?"""
-    if max_loss < 0:
-        return (max_profit > 0) and (high_timestamp < low_timestamp)
-    else:
-        return max_profit > 0
-
-
-def is_loss_making(
-    max_profit: float,
-    max_loss: float,
-    high_timestamp: pd.Timestamp,
-    low_timestamp: pd.Timestamp,
-) -> bool:
-    """Does the max loss occur before the max profit was made?"""
-    if max_profit <= 0:
-        return (max_loss < 0) and (low_timestamp < high_timestamp)
-    else:
-        return max_loss < 0
-
-
 def load_trading_data():
     df = load_df()
     df["converted_open_ts"] = dfa.to_datetime(df["open_ts"], unit="ms")
@@ -313,13 +214,13 @@ def load_trading_data():
 
 
 def load_strategies(
-    path: str = None,
-    max_indicators: int = None,
-    max_same_class: int = None,
+    path: str | None = None,
+    max_indicators: int | None = None,
+    max_same_class: int | None = None,
     population_size: int = POPULATION_SIZE,
-) -> List[Dict]:
+) -> list[dict]:
     if path:
-        with open(path, "r") as fi:
+        with open(path) as fi:
             return json.loads(fi.read())
 
     return generate_main(

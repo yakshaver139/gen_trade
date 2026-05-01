@@ -1,10 +1,11 @@
-import logging
 import ast
-from typing import Dict, List, Tuple
-from helpers import get_latest_path
+import logging
+
 import pandas as pd
-from run_strategy import win, loss
-from env import HIT, STOP_LOSS, STOPPED, NA, TARGET, BUY_AMOUNT
+
+from gentrade.env import BUY_AMOUNT, HIT, NA, STOP_LOSS, STOPPED, TARGET
+from gentrade.helpers import get_latest_path
+from gentrade.run_strategy import loss, win
 
 AMOUNT = 1000
 
@@ -31,7 +32,7 @@ def main(path):
 
 def calculate_cumulative_profit(
     path: str | None = None, df: pd.DataFrame | None = None
-) -> Dict:
+) -> dict:
     """groups consecutive results to calculate the cumulative profit and loss.
 
     NB this would be useful for working out the compounded P&L, but not in use.
@@ -76,15 +77,12 @@ def calculate_cumulative_profit(
 
 def calculate_simple_profit(
     path: str | None = None, df: pd.DataFrame | None = None
-) -> Dict:
+) -> dict:
     try:
         if len(df):
             df = df
     except (TypeError, ValueError):
-        if path:
-            df = pd.read_csv(path)
-        else:
-            df = pd.DataFrame(columns=["id", "results"])
+        df = pd.read_csv(path) if path else pd.DataFrame(columns=["id", "results"])
     output = dict()
 
     for ix in range(len(df)):
@@ -118,10 +116,10 @@ def increment_counters(
     win: bool,
     loss: bool,
     hold: bool,
-    wins: List,
-    losses: List,
-    holds: List,
-) -> Tuple:
+    wins: list,
+    losses: list,
+    holds: list,
+) -> tuple:
     if win:
         wins.append(streak)
         losses.append(0)
@@ -137,8 +135,8 @@ def increment_counters(
     return wins, losses, holds
 
 
-def get_profit(wins: List, losses: List) -> int:
-    zipper = zip(wins, losses)
+def get_profit(wins: list, losses: list) -> int:
+    zipper = zip(wins, losses, strict=True)
     profit = 0
     for n_wins, n_losses in zipper:
         if n_wins > n_losses:

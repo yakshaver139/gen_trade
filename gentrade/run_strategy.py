@@ -1,11 +1,11 @@
-import pandas as pd
-from typing import Dict, List
-from logger import get_logger
-from helpers import make_pandas_df
-from load_strategy import load_from_object_parenthesised, query_strategy
-from numpy import datetime64
 import arrow
-from env import TARGET, STOP_LOSS, HIT, STOPPED, NA, NO_TRADES, CUTOFF_PERCENT
+import pandas as pd
+from numpy import datetime64
+
+from gentrade.env import CUTOFF_PERCENT, HIT, NA, NO_TRADES, STOP_LOSS, STOPPED, TARGET
+from gentrade.helpers import make_pandas_df
+from gentrade.load_strategy import load_from_object_parenthesised, query_strategy
+from gentrade.logger import get_logger
 
 # example multiple disjunct strategy
 # volatility_dcm < volatility_dcm_previous and (trend_psar_up > trend_sma_slow or (volatility_kchi < volatility_kchi_previous or trend_ema_slow < trend_sma_slow))
@@ -19,9 +19,10 @@ def loss(x):
 
 
 def shift_period(timestamp: pd.Timestamp) -> datetime64:
-    """Shift the timestamp by 1 day - 1 ms"""
-    ts = arrow.get(timestamp.isoformat())
-    return datetime64(ts.shift(days=1).shift(microseconds=-1).isoformat())
+    """Shift the timestamp by 1 day - 1 ms (returns a tz-naive ``datetime64``)."""
+    ts = arrow.get(timestamp.isoformat()).shift(days=1).shift(microseconds=-1)
+    # numpy datetime64 deprecates parsing tz-aware strings; strip tz first.
+    return datetime64(ts.naive.isoformat())
 
 
 def short_cut_elite(ranked_results, strategy) -> pd.Series:
@@ -33,7 +34,7 @@ def short_cut_elite(ranked_results, strategy) -> pd.Series:
         return ranked.loc[ranked.id == strategy["id"]]
 
 
-def run_strategy(trading_data: pd.DataFrame, ranked_results: List, strategy: Dict):
+def run_strategy(trading_data: pd.DataFrame, ranked_results: list, strategy: dict):
     """For each strategy:
     - Set the trade period to one day.
     - find all entry points
@@ -61,7 +62,7 @@ def run_strategy(trading_data: pd.DataFrame, ranked_results: List, strategy: Dic
 
 def find_profit_in_window(
     df: pd.DataFrame, subset: pd.DataFrame, strategy: dict
-) -> List[dict]:
+) -> list[dict]:
     """Points 2 from `main`
     2.a Set the trade period to one day.
     2.b For each of these windows find the highest point (profit)
@@ -173,36 +174,3 @@ def get_trade_result(window: pd.Series, target: float, stop_loss: float) -> tupl
     return (result, target_hit_at, stopped_out_at)
 
 
-def get_window_performance(window: pd.Series, row: pd.Series) -> Dict:
-    """Finds the high and lowest points of a trade window and time deltas between them."""
-    high = window["close"].max()
-    low = window["close"].min()
-
-    # edge case: multiple rows can close with the same value,
-    # hence locate the first occurence
-    high_point = window.loc[
-        window["open_ts"] == window[window["close"] == high].index.min()
-    ]
-    low_point = window.loc[
-        window["open_ts"] == window[window["close"] == low].index.min()
-    ]
-    # delta between window open and high point
-    max_profit = high - row["open"]
-    max_loss = low - row["open"]
-
-    high_timestamp = pd.Timestamp(high_point["converted_open_ts"].values[0])
-    high_delta = high_timestamp - row["converted_open_ts"]
-    profit_steps = high_delta.components.hours * 15 + high_delta.components.minutes
-
-    low_timestamp = pd.Timestamp(low_point["converted_open_ts"].values[0])
-    low_delta = low_timestamp - row["converted_open_ts"]
-    loss_steps = low_delta.components.hours * 15 + low_delta.components.minutes
-
-    return dict(
-        max_profit=max_profit,
-        high_timestamp=high_timestamp,
-        profit_steps=profit_steps,
-        max_loss=max_loss,
-        low_timestamp=low_timestamp,
-        loss_steps=loss_steps,
-    )
