@@ -339,11 +339,19 @@ there could be a calculation error." The Phase 1 work is the audit of that claim
 - Per-asset signal thresholds are still global (a strategy that uses
   `momentum_rsi >= 70` interprets that the same way for BTC and SOL); the GA already
   mutates absolute thresholds, but cross-asset retraining isn't automatic.
-- No paper trading. No live trading. No risk module.
+- **Paper trading is scaffolded but not driven yet.** `gentrade/paper.py` ships the
+  full state machine: `Broker` protocol, `PaperBroker` (simulated fills with the
+  same fee/slippage model as the offline engine), `PaperPortfolio`, `RiskLimits`
+  + `RiskGuard` (max position size, max open positions, max daily loss, max
+  drawdown, kill switch — every limit tested), and `PaperTrader.tick(bars)`. What
+  isn't wired yet: a live ccxt polling loop and an API/CLI surface to drive it.
+- No live trading. No real money. No exchange order submission.
 
 If you point money at this code in its current state, that's on you.
 
 See [`PLAN.md`](PLAN.md) for the phased plan. Phases 0 (revival), 1 (modelling rigor),
 2 (persistence + job model), 3 (FastAPI + auth + security review), 4 (Streamlit UI),
 and 5 (multi-asset ingest via ccxt + yfinance + cross-asset robustness check) are
-complete. Phase 6 (paper + live trading, gated) is not yet started.
+complete. Phase 6 (paper trading) is in progress: the state machine + risk module are
+shipped (`gentrade/paper.py`), the live ccxt feed loop is not yet wired. Live trading
+remains gated and untouched.
