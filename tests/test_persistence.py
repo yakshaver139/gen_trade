@@ -255,3 +255,167 @@ def test_save_run_with_code_sha_and_data_hash(tmp_path):
     loaded = load_run(run_id, engine)
     assert loaded.manifest.code_sha == "deadbeef" * 5
     assert loaded.manifest.data_hash == "cafe" * 16
+
+
+# ---------------------------------------------------------------------------
+# resumability — the gold-standard determinism test
+# ---------------------------------------------------------------------------
+
+def test_incremental_save_persists_each_generation(tmp_path):
+    """Running with engine= populates generations + strategies tables incrementally."""
+    from sqlalchemy.orm import Session
+
+    from gentrade.persistence import RunRow
+
+    engine = init_db(f"sqlite:///{tmp_path}/t.db")
+    bars = _bars()
+    train, val, test = _windows(bars)
+    result = run_ga(
+        bars=bars,
+        initial_strategies=_strategies(),
+        train_window=train,
+        validation_window=val,
+        test_window=test,
+        config=CFG,
+        backtest_config=BT_CFG,
+        seed=42,
+        engine=engine,
+    )
+
+    # The result returned in-memory is identical to a non-persisted run
+    assert result.backtest_report is not None
+
+    runs = list_runs(engine)
+    assert len(runs) == 1
+    assert runs[0]["status"] == "reported"
+    assert runs[0]["current_generation"] == CFG.max_generations
+
+    # Strategies for every evaluated generation are present.
+    with Session(engine) as session:
+        run_row = session.scalars(__import__("sqlalchemy").select(RunRow)).one()
+        gen_numbers = sorted({s.generation_number for s in run_row.strategies})
+        # gens 1..max are evaluated; the final gen has no successor population
+        assert gen_numbers == list(range(1, CFG.max_generations + 1))
+
+
+def test_resume_after_kill_produces_byte_equivalent_result(tmp_path):
+    """Run for max_generations from scratch; run for half then resume; assert identical.
+
+    'Identical' here means: same fitness sequence, same per-generation max_fitness,
+    same chosen strategy content. Strategy IDs differ (uuid.uuid4 is not seeded by
+    `random.seed`) — that's the same caveat as `test_run_ga_deterministic_with_same_seed`.
+    """
+    from gentrade.ga import run_ga as run
+
+    fresh_db = init_db(f"sqlite:///{tmp_path}/fresh.db")
+    full_cfg = GAConfig(
+        population_size=4,
+        max_generations=4,
+        elitism_count=2,
+        selection_pressure="tournament",
+        min_trades_for_fitness=1,
+    )
+    bars = _bars()
+    train, val, test = _windows(bars)
+    fresh = run(
+        bars=bars,
+        initial_strategies=_strategies(),
+        train_window=train,
+        validation_window=val,
+        test_window=test,
+        config=full_cfg,
+        backtest_config=BT_CFG,
+        seed=99,
+        engine=fresh_db,
+    )
+
+    # Now: a partial run that completes 2 of 4 generations and then
+    # exits cleanly without finalizing — simulating a kill at end of gen 2.
+    partial_db = init_db(f"sqlite:///{tmp_path}/partial.db")
+    partial = run(
+        bars=bars,
+        initial_strategies=_strategies(),
+        train_window=train,
+        validation_window=val,
+        test_window=test,
+        config=full_cfg,
+        backtest_config=BT_CFG,
+        seed=99,
+        engine=partial_db,
+        stop_after_generation=2,
+    )
+    assert len(partial.per_generation) == 2
+
+    # The run is still in progress and resumable.
+    rows = list_runs(partial_db)
+    assert rows[0]["status"] == "in_progress"
+    assert rows[0]["current_generation"] == 2
+    run_id = rows[0]["id"]
+
+    # Resume the run.
+    resumed = run(
+        bars=bars,
+        engine=partial_db,
+        resume_run_id=run_id,
+    )
+
+    # Resume must produce 4 generations total.
+    assert len(resumed.per_generation) == 4
+
+    # Per-generation max fitness curves match.
+    for fresh_snap, resumed_snap in zip(
+        fresh.per_generation, resumed.per_generation, strict=True
+    ):
+        assert fresh_snap.train_metrics.max_fitness == pytest.approx(
+            resumed_snap.train_metrics.max_fitness
+        )
+        assert fresh_snap.validation_metrics.max_fitness == pytest.approx(
+            resumed_snap.validation_metrics.max_fitness
+        )
+
+    # Final-ranking fitnesses match exactly.
+    assert fresh.final_ranking["fitness"].tolist() == resumed.final_ranking["fitness"].tolist()
+
+    # Chosen strategy content (indicators + conjunctions) matches —
+    # IDs differ because uuid.uuid4 isn't seeded by random.seed.
+    fresh_chosen = fresh.final_ranking.iloc[0]["strategy"]
+    resumed_chosen = resumed.final_ranking.iloc[0]["strategy"]
+    assert fresh_chosen["indicators"] == resumed_chosen["indicators"]
+    assert fresh_chosen["conjunctions"] == resumed_chosen["conjunctions"]
+
+
+def test_resume_unknown_run_id_raises(tmp_path):
+    engine = init_db(f"sqlite:///{tmp_path}/t.db")
+    from gentrade.ga import run_ga as run
+
+    with pytest.raises(LookupError, match="not found"):
+        run(bars=_bars(), engine=engine, resume_run_id="not-a-real-id")
+
+
+def test_resume_completed_run_raises(tmp_path):
+    """A finished run is not resumable — it's already in 'reported' state."""
+    engine = init_db(f"sqlite:///{tmp_path}/t.db")
+    bars = _bars()
+    train, val, test = _windows(bars)
+    result = run_ga(
+        bars=bars,
+        initial_strategies=_strategies(),
+        train_window=train,
+        validation_window=val,
+        test_window=test,
+        config=CFG,
+        backtest_config=BT_CFG,
+        seed=42,
+        engine=engine,
+    )
+    # find the run id
+    rows = list_runs(engine)
+    assert len(rows) == 1
+    run_id = rows[0]["id"]
+
+    from gentrade.ga import run_ga as run
+
+    with pytest.raises(ValueError, match="already reported"):
+        run(bars=bars, engine=engine, resume_run_id=run_id)
+
+    _ = result  # keep linters happy
