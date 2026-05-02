@@ -221,8 +221,49 @@ st.plotly_chart(fig_sc, use_container_width=True)
 st.caption(CHART_HELP["trade_scatter"])
 
 # ---------------- raw table ----------------
-with st.expander("trades"):
-    st.dataframe(tdf, use_container_width=True, hide_index=True)
+# Background colour per row by outcome. Tinted rather than saturated so
+# the table stays legible — the colour is a wayfinding hint, not the
+# primary signal (the dedicated outcome column already says it explicitly).
+_OUTCOME_TINT = {
+    "TARGET_HIT": "rgba(46, 160, 67, 0.18)",          # green
+    "STOPPED_OUT": "rgba(214, 39, 40, 0.18)",         # red
+    "NO_CLOSE_IN_WINDOW": "rgba(136, 136, 136, 0.12)",  # grey
+}
+
+
+def _style_trades_table(frame: pd.DataFrame):
+    """Return a pandas Styler with rows tinted by outcome + per-cell
+    formatting for prices and the `return` column."""
+
+    def _row_tint(row):
+        tint = _OUTCOME_TINT.get(row.get("outcome", ""), "")
+        return [f"background-color: {tint}" if tint else ""] * len(row)
+
+    def _return_colour(value):
+        if value is None or pd.isna(value):
+            return ""
+        return "color: #2ca02c; font-weight:600" if value > 0 else "color: #d62728; font-weight:600"
+
+    styler = frame.style.apply(_row_tint, axis=1)
+    if "return" in frame.columns:
+        styler = styler.map(_return_colour, subset=["return"])
+    fmt_map: dict = {}
+    for col in ("entry_price", "exit_price", "target_price", "stop_loss_price"):
+        if col in frame.columns:
+            fmt_map[col] = "{:,.2f}"
+    if "return" in frame.columns:
+        fmt_map["return"] = "{:+.4%}"
+    if "equity" in frame.columns:
+        fmt_map["equity"] = "{:.4f}"
+    if "drawdown" in frame.columns:
+        fmt_map["drawdown"] = "{:+.2%}"
+    if fmt_map:
+        styler = styler.format(fmt_map, na_rep="—")
+    return styler
+
+
+with st.expander("trades", expanded=False):
+    st.dataframe(_style_trades_table(tdf), use_container_width=True, hide_index=True)
 
 # ---------------- cross-asset robustness ----------------
 st.subheader("Cross-asset robustness")
