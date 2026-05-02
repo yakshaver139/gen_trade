@@ -18,6 +18,22 @@ from __future__ import annotations
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
+from gentrade.ui.indicator_docs import get_doc
+
+
+@st.dialog("Indicator details")
+def show_indicator_doc(indicator: str, type_: str) -> None:
+    """Modal showing description / formula / example for an indicator."""
+    doc = get_doc(indicator)
+    st.markdown(f"### `{indicator}`")
+    if type_:
+        st.caption(f"type: **{type_}**")
+    st.markdown("**Description**")
+    st.markdown(doc.get("description", "—"))
+    st.markdown("**Formula**")
+    st.code(doc.get("formula", "—"), language="text")
+    st.markdown("**Example**")
+    st.markdown(doc.get("example", "—"))
 
 st.set_page_config(page_title="gentrade — new run", layout="wide")
 st.title("New Run")
@@ -60,6 +76,7 @@ mode = st.radio(
 # When in seed mode, fetch the catalogue once. Cached across reruns.
 catalogue: list[dict] = []
 indicator_names: list[str] = []
+indicator_type: dict[str, str] = {}
 default_thresholds: dict[str, float] = {}
 if mode == "Seed a strategy":
     try:
@@ -67,17 +84,20 @@ if mode == "Seed a strategy":
     except ApiError as e:
         st.error(f"failed to load catalogue: {e}")
         st.stop()
-    indicator_names = sorted(c["indicator"] for c in catalogue if c["absolute_thresholds"])
+    # Sort by (type, indicator) so the dropdown groups visually by type.
+    eligible = [c for c in catalogue if c["absolute_thresholds"]]
+    eligible.sort(key=lambda c: (c.get("type", ""), c["indicator"]))
+    indicator_names = [c["indicator"] for c in eligible]
+    indicator_type = {c["indicator"]: c.get("type", "") for c in eligible}
     if not indicator_names:
         st.warning(
             "No indicators in the catalogue support absolute thresholds. "
             "Seed mode is unavailable; switch to Auto-generate."
         )
         st.stop()
-    for c in catalogue:
-        if c["absolute_thresholds"]:
-            mid = c["absolute_thresholds"][len(c["absolute_thresholds"]) // 2]
-            default_thresholds[c["indicator"]] = float(mid)
+    for c in eligible:
+        mid = c["absolute_thresholds"][len(c["absolute_thresholds"]) // 2]
+        default_thresholds[c["indicator"]] = float(mid)
 
     # Initialise with one row if none yet.
     if not st.session_state.seed_rows:
@@ -91,10 +111,15 @@ if mode == "Seed a strategy":
             }
         ]
 
-    st.markdown("**Seeded strategy** — joined left-to-right by the conjunction at the start of each row.")
+    st.markdown(
+        "**Seeded strategy** — joined left-to-right by the conjunction "
+        "at the start of each row. Indicators are grouped by type "
+        "([momentum] / [trend] / [volatility] / [volume]); click **?** "
+        "for a description, formula and example."
+    )
     rows = st.session_state.seed_rows
     for i, row in enumerate(rows):
-        cols = st.columns([1.0, 3.0, 1.0, 2.0, 0.5])
+        cols = st.columns([1.0, 3.0, 0.4, 1.0, 2.0, 0.5])
         with cols[0]:
             if i == 0:
                 st.markdown("&nbsp;<br><strong>WHEN</strong>", unsafe_allow_html=True)
@@ -107,15 +132,32 @@ if mode == "Seed a strategy":
                     label_visibility="collapsed",
                 )
         with cols[1]:
-            ind_idx = indicator_names.index(row["indicator"]) if row["indicator"] in indicator_names else 0
+            ind_idx = (
+                indicator_names.index(row["indicator"])
+                if row["indicator"] in indicator_names
+                else 0
+            )
             row["indicator"] = st.selectbox(
                 "indicator",
                 options=indicator_names,
                 index=ind_idx,
                 key=f"ind_{i}",
+                format_func=lambda n: (
+                    f"[{indicator_type.get(n, '')}]  {n}"
+                    if indicator_type.get(n)
+                    else n
+                ),
                 label_visibility="collapsed",
             )
         with cols[2]:
+            if st.button(
+                "?", key=f"info_{i}",
+                help=f"explain {row['indicator']}",
+            ):
+                show_indicator_doc(
+                    row["indicator"], indicator_type.get(row["indicator"], "")
+                )
+        with cols[3]:
             row["op"] = st.selectbox(
                 "op",
                 options=OPS,
@@ -123,7 +165,7 @@ if mode == "Seed a strategy":
                 key=f"op_{i}",
                 label_visibility="collapsed",
             )
-        with cols[3]:
+        with cols[4]:
             row["abs_value"] = float(
                 st.number_input(
                     "abs_value",
@@ -133,7 +175,7 @@ if mode == "Seed a strategy":
                     label_visibility="collapsed",
                 )
             )
-        with cols[4]:
+        with cols[5]:
             if i > 0 and st.button("✕", key=f"rm_{i}", help="remove this row"):
                 rows.pop(i)
                 st.rerun()
