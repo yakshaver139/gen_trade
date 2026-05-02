@@ -36,6 +36,7 @@ from gentrade.api.schemas import (
     BacktestRequest,
     BacktestResponse,
     BarOut,
+    CatalogueIndicatorOut,
     CreateRunRequest,
     CreateRunResponse,
     CrossAssetRequest,
@@ -117,6 +118,46 @@ def create_app(
         return [
             AssetOut(asset=e.asset, exchange=e.exchange, interval=e.interval)
             for e in asset_registry.list_assets()
+        ]
+
+    @app.get("/catalogue", response_model=list[CatalogueIndicatorOut])
+    def get_catalogue(_: None = auth) -> list[CatalogueIndicatorOut]:
+        """The trusted indicator catalogue, deduplicated by indicator name.
+
+        The UI's seed-strategy builder uses this to populate dropdowns
+        — anything not in this list is rejected by the seed validator,
+        so the dropdown is the source of truth for what's pickable.
+        """
+        from gentrade.generate_strategy import LOADED_INDICATORS
+
+        by_indicator: dict[str, dict] = {}
+        for s in LOADED_INDICATORS:
+            ind = s["indicator"]
+            entry = by_indicator.setdefault(
+                ind,
+                {
+                    "indicator": ind,
+                    "type": s.get("type", ""),
+                    "ops": set(),
+                    "absolute_thresholds": [],
+                    "relative_targets": set(),
+                },
+            )
+            entry["ops"].add(s["op"])
+            if s.get("absolute") and s.get("abs_value") is not None:
+                entry["absolute_thresholds"].append(float(s["abs_value"]))
+            if not s.get("absolute") and s.get("rel_value"):
+                entry["relative_targets"].add(s["rel_value"])
+
+        return [
+            CatalogueIndicatorOut(
+                indicator=v["indicator"],
+                type=v["type"],
+                ops=sorted(v["ops"]),
+                absolute_thresholds=sorted(set(v["absolute_thresholds"])),
+                relative_targets=sorted(v["relative_targets"]),
+            )
+            for v in sorted(by_indicator.values(), key=lambda x: x["indicator"])
         ]
 
     @app.post(

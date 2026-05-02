@@ -135,6 +135,49 @@
         "title": "BarOut",
         "type": "object"
       },
+      "CatalogueIndicatorOut": {
+        "description": "One entry in the indicator catalogue exposed via GET /catalogue.\n\nThe UI uses this to populate dropdowns. ``ops`` is the operators the\nlegacy catalogue pairs this indicator with; ``absolute_thresholds``\nis the canonical list of numeric thresholds (helpful as defaults in\nthe UI). ``type`` is the signal class (momentum / trend / volatility\n/ volume).",
+        "properties": {
+          "absolute_thresholds": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Absolute Thresholds",
+            "type": "array"
+          },
+          "indicator": {
+            "title": "Indicator",
+            "type": "string"
+          },
+          "ops": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ops",
+            "type": "array"
+          },
+          "relative_targets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relative Targets",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indicator",
+          "type",
+          "ops",
+          "absolute_thresholds",
+          "relative_targets"
+        ],
+        "title": "CatalogueIndicatorOut",
+        "type": "object"
+      },
       "CreateRunRequest": {
         "description": "Body of POST /runs.\n\n``asset`` must be a registered asset (see assets.py). ``population_size``\nis also the number of strategies the server generates.",
         "properties": {
@@ -167,6 +210,20 @@
             "default": 0,
             "title": "Seed",
             "type": "integer"
+          },
+          "seed_strategies": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/StrategySpec"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Strategies"
           },
           "selection_pressure": {
             "default": "tournament",
@@ -427,6 +484,47 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IndicatorSpec": {
+        "description": "One signal in a user-seeded strategy.\n\nServer-side validation against the trusted catalogue is what makes\nthis safe \u2014 the indicator name is interpolated into a pandas query\nstring. Only ``absolute=True`` strategies are accepted from the\nwire today; relative comparators (MA / PREVIOUS_PERIOD / sibling)\nwill land in a follow-up.",
+        "properties": {
+          "abs_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abs Value"
+          },
+          "absolute": {
+            "default": true,
+            "title": "Absolute",
+            "type": "boolean"
+          },
+          "indicator": {
+            "title": "Indicator",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              ">=",
+              "<=",
+              ">",
+              "<"
+            ],
+            "title": "Op",
+            "type": "string"
+          }
+        },
+        "required": [
+          "indicator",
+          "op"
+        ],
+        "title": "IndicatorSpec",
         "type": "object"
       },
       "ManifestOut": {
@@ -790,6 +888,36 @@
         "title": "StrategyOut",
         "type": "object"
       },
+      "StrategySpec": {
+        "description": "One user-seeded strategy. ``conjunctions`` joins adjacent indicators\nso ``len(conjunctions) == len(indicators) - 1``. Per the\nFirstConjunctionIsAnd spec invariant, ``conjunctions[0]`` (if any)\nmust be ``\"and\"`` so the parsed query string parenthesises cleanly.",
+        "properties": {
+          "conjunctions": {
+            "items": {
+              "enum": [
+                "and",
+                "or"
+              ],
+              "type": "string"
+            },
+            "title": "Conjunctions",
+            "type": "array"
+          },
+          "indicators": {
+            "items": {
+              "$ref": "#/components/schemas/IndicatorSpec"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Indicators",
+            "type": "array"
+          }
+        },
+        "required": [
+          "indicators"
+        ],
+        "title": "StrategySpec",
+        "type": "object"
+      },
       "TradeOut": {
         "description": "A single trade from a window's evaluation, surfaced for UI charts.",
         "properties": {
@@ -1082,6 +1210,57 @@
           }
         },
         "summary": "Post Cross Asset"
+      }
+    },
+    "/catalogue": {
+      "get": {
+        "description": "The trusted indicator catalogue, deduplicated by indicator name.\n\nThe UI's seed-strategy builder uses this to populate dropdowns\n\u2014 anything not in this list is rejected by the seed validator,\nso the dropdown is the source of truth for what's pickable.",
+        "operationId": "get_catalogue_catalogue_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogueIndicatorOut"
+                  },
+                  "title": "Response Get Catalogue Catalogue Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Catalogue"
       }
     },
     "/healthz": {

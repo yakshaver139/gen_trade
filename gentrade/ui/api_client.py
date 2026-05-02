@@ -81,6 +81,9 @@ class ApiClient:
     def list_assets(self) -> list[dict]:
         return self._request("GET", "/assets")
 
+    def list_catalogue(self) -> list[dict]:
+        return self._request("GET", "/catalogue")
+
     def list_runs(self) -> list[dict]:
         return self._request("GET", "/runs")
 

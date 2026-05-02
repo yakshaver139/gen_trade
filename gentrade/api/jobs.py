@@ -101,6 +101,77 @@ def _generate_strategies(population_size: int, seed: int) -> list[dict]:
     return gen_main(population_size=population_size)
 
 
+def _validate_seed_strategies(seeds) -> list[dict]:
+    """Validate user-supplied seed strategies against the trusted catalogue.
+
+    The strategy DSL builds a ``pandas.DataFrame.query()`` string by
+    interpolating indicator names directly. Letting arbitrary names
+    through would be expression-injection-shaped. Every field checked
+    here is a security boundary, not a UX nicety.
+    """
+    import math
+    import uuid
+
+    from gentrade.generate_strategy import LOADED_INDICATORS
+
+    valid_indicators = {s["indicator"] for s in LOADED_INDICATORS}
+    valid_ops = {">=", "<=", ">", "<"}
+
+    out: list[dict] = []
+    for idx, spec in enumerate(seeds):
+        if len(spec.conjunctions) != len(spec.indicators) - 1:
+            raise ValueError(
+                f"seed[{idx}]: conjunctions length must be indicators - 1 "
+                f"(got {len(spec.conjunctions)} for {len(spec.indicators)} indicators)"
+            )
+        if spec.conjunctions and spec.conjunctions[0] != "and":
+            # Mirrors the spec's FirstConjunctionIsAnd invariant.
+            raise ValueError(
+                f"seed[{idx}]: first conjunction must be 'and' "
+                "(parses cleanly when disjunctions are parenthesised)"
+            )
+
+        indicators_out: list[dict] = []
+        for j, ind in enumerate(spec.indicators):
+            if ind.indicator not in valid_indicators:
+                raise ValueError(
+                    f"seed[{idx}].indicators[{j}]: unknown indicator "
+                    f"{ind.indicator!r}"
+                )
+            if ind.op not in valid_ops:
+                raise ValueError(
+                    f"seed[{idx}].indicators[{j}]: unknown op {ind.op!r}"
+                )
+            if not ind.absolute:
+                # Relative comparators land in a follow-up; reject for now.
+                raise ValueError(
+                    f"seed[{idx}].indicators[{j}]: only absolute thresholds "
+                    "are supported in seed strategies today"
+                )
+            if ind.abs_value is None or not math.isfinite(ind.abs_value):
+                raise ValueError(
+                    f"seed[{idx}].indicators[{j}]: abs_value must be a "
+                    "finite number"
+                )
+            indicators_out.append(
+                {
+                    "absolute": True,
+                    "indicator": ind.indicator,
+                    "op": ind.op,
+                    "abs_value": float(ind.abs_value),
+                }
+            )
+
+        out.append(
+            {
+                "id": str(uuid.uuid4()),
+                "indicators": indicators_out,
+                "conjunctions": list(spec.conjunctions),
+            }
+        )
+    return out
+
+
 def prepare_run(
     body: CreateRunRequest, engine: Engine, log_dir: Path
 ) -> tuple[RunSpec, str]:
@@ -113,7 +184,20 @@ def prepare_run(
         raise ValueError(f"unknown asset {body.asset!r}")
     bars = _load_bars(entry.path)
     train, val, test = _split_windows(bars)
-    strategies = _generate_strategies(body.population_size, body.seed)
+
+    # Seed strategies (if any) prepend the random pool. If the user
+    # supplied more seeds than population_size we truncate; if fewer,
+    # the random generator fills the rest.
+    seeded = (
+        _validate_seed_strategies(body.seed_strategies)
+        if body.seed_strategies
+        else []
+    )
+    n_to_gen = max(0, body.population_size - len(seeded))
+    random_pool = (
+        _generate_strategies(n_to_gen, body.seed) if n_to_gen else []
+    )
+    strategies = (seeded + random_pool)[: body.population_size]
     cfg = GAConfig(
         population_size=body.population_size,
         max_generations=body.generations,

@@ -10,9 +10,55 @@ the server already knows about (looked up by `(run_id, strategy_id)`).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+_ALLOWED_OPS = (">=", "<=", ">", "<")
+
+
+class IndicatorSpec(BaseModel):
+    """One signal in a user-seeded strategy.
+
+    Server-side validation against the trusted catalogue is what makes
+    this safe — the indicator name is interpolated into a pandas query
+    string. Only ``absolute=True`` strategies are accepted from the
+    wire today; relative comparators (MA / PREVIOUS_PERIOD / sibling)
+    will land in a follow-up.
+    """
+
+    indicator: str
+    op: Literal[">=", "<=", ">", "<"]
+    absolute: bool = True
+    abs_value: float | None = None
+
+
+class StrategySpec(BaseModel):
+    """One user-seeded strategy. ``conjunctions`` joins adjacent indicators
+    so ``len(conjunctions) == len(indicators) - 1``. Per the
+    FirstConjunctionIsAnd spec invariant, ``conjunctions[0]`` (if any)
+    must be ``"and"`` so the parsed query string parenthesises cleanly.
+    """
+
+    indicators: list[IndicatorSpec] = Field(min_length=1, max_length=8)
+    conjunctions: list[Literal["and", "or"]] = Field(default_factory=list)
+
+
+class CatalogueIndicatorOut(BaseModel):
+    """One entry in the indicator catalogue exposed via GET /catalogue.
+
+    The UI uses this to populate dropdowns. ``ops`` is the operators the
+    legacy catalogue pairs this indicator with; ``absolute_thresholds``
+    is the canonical list of numeric thresholds (helpful as defaults in
+    the UI). ``type`` is the signal class (momentum / trend / volatility
+    / volume).
+    """
+
+    indicator: str
+    type: str
+    ops: list[str]
+    absolute_thresholds: list[float]
+    relative_targets: list[str]
 
 
 class CreateRunRequest(BaseModel):
@@ -33,6 +79,11 @@ class CreateRunRequest(BaseModel):
     trade_window_bars: int = Field(ge=1, le=10_000, default=96)
     taker_fee_bps: float = Field(ge=0, le=1000, default=10.0)
     slippage_bps: float = Field(ge=0, le=1000, default=1.0)
+
+    # Optional seed strategies. Each is validated against the trusted
+    # catalogue server-side; the rest of the population is auto-generated
+    # to fill ``population_size``. None or empty list ⇒ pure auto-generate.
+    seed_strategies: list[StrategySpec] | None = None
 
     @field_validator("selection_pressure")
     @classmethod

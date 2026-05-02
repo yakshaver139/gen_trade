@@ -193,6 +193,150 @@ def test_post_run_kicks_off_a_run_and_returns_202(client):
     assert final["current_generation"] == 2
 
 
+def test_catalogue_returns_known_indicators(client):
+    c, _ = client
+    r = c.get("/catalogue", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body, list)
+    assert len(body) > 0
+    # every entry has the documented shape
+    for entry in body:
+        assert "indicator" in entry and isinstance(entry["indicator"], str)
+        assert "type" in entry
+        assert "ops" in entry and isinstance(entry["ops"], list)
+        assert "absolute_thresholds" in entry
+    # spot-check: momentum_rsi has both >= and <= ops in the catalogue
+    rsi = next((e for e in body if e["indicator"] == "momentum_rsi"), None)
+    assert rsi is not None
+    assert ">=" in rsi["ops"] or "<=" in rsi["ops"]
+
+
+def test_catalogue_requires_auth(client):
+    c, _ = client
+    r = c.get("/catalogue")
+    assert r.status_code == 401
+
+
+def test_post_run_with_valid_seed_strategy(client):
+    c, _ = client
+    body = {
+        "asset": "TEST-15m",
+        "population_size": 4,
+        "generations": 2,
+        "seed": 42,
+        "seed_strategies": [
+            {
+                "indicators": [
+                    {
+                        "indicator": "momentum_rsi",
+                        "op": ">=",
+                        "absolute": True,
+                        "abs_value": 70.0,
+                    }
+                ],
+                "conjunctions": [],
+            }
+        ],
+    }
+    r = c.post("/runs", json=body, headers={"X-API-Key": API_KEY})
+    assert r.status_code == 202
+    rid = r.json()["run_id"]
+    final = _wait_for_status(c, rid, target="reported")
+    # the seeded strategy must appear in generation 1's population (rank 0,
+    # since seeds are prepended before the random pool)
+    g1 = c.get(
+        f"/runs/{rid}/generations/1", headers={"X-API-Key": API_KEY}
+    ).json()
+    seeded = g1["strategies"][0]
+    assert any(
+        ind["indicator"] == "momentum_rsi" and ind["abs_value"] == 70.0
+        for ind in seeded["indicators"]
+    )
+    assert final["chosen_strategy_id"] is not None
+
+
+def test_post_run_seed_with_unknown_indicator_returns_400(client):
+    c, _ = client
+    r = c.post(
+        "/runs",
+        json={
+            "asset": "TEST-15m",
+            "population_size": 4,
+            "generations": 2,
+            "seed_strategies": [
+                {
+                    "indicators": [
+                        {
+                            "indicator": "totally_made_up",
+                            "op": ">=",
+                            "absolute": True,
+                            "abs_value": 1.0,
+                        }
+                    ],
+                    "conjunctions": [],
+                }
+            ],
+        },
+        headers={"X-API-Key": API_KEY},
+    )
+    assert r.status_code == 400
+    assert "totally_made_up" in r.json()["detail"]
+
+
+def test_post_run_seed_with_first_or_conjunction_rejected(client):
+    """Per the FirstConjunctionIsAnd spec invariant."""
+    c, _ = client
+    r = c.post(
+        "/runs",
+        json={
+            "asset": "TEST-15m",
+            "population_size": 4,
+            "generations": 2,
+            "seed_strategies": [
+                {
+                    "indicators": [
+                        {"indicator": "momentum_rsi", "op": ">=",
+                         "absolute": True, "abs_value": 70.0},
+                        {"indicator": "momentum_rsi", "op": "<=",
+                         "absolute": True, "abs_value": 30.0},
+                    ],
+                    "conjunctions": ["or"],
+                }
+            ],
+        },
+        headers={"X-API-Key": API_KEY},
+    )
+    assert r.status_code == 400
+    assert "first conjunction must be 'and'" in r.json()["detail"]
+
+
+def test_post_run_seed_count_mismatch_returns_400(client):
+    c, _ = client
+    r = c.post(
+        "/runs",
+        json={
+            "asset": "TEST-15m",
+            "population_size": 4,
+            "generations": 2,
+            "seed_strategies": [
+                {
+                    "indicators": [
+                        {"indicator": "momentum_rsi", "op": ">=",
+                         "absolute": True, "abs_value": 70.0},
+                        {"indicator": "momentum_rsi", "op": "<=",
+                         "absolute": True, "abs_value": 30.0},
+                    ],
+                    # too many for 2 indicators (need exactly 1)
+                    "conjunctions": ["and", "or"],
+                }
+            ],
+        },
+        headers={"X-API-Key": API_KEY},
+    )
+    assert r.status_code == 400
+
+
 def test_post_run_invalid_pressure_returns_422(client):
     c, _ = client
     r = c.post(
