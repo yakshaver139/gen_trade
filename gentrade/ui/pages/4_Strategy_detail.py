@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
+from gentrade.ui.copy import CHART_HELP, METRIC_HELP
 from gentrade.ui.format import fmt
 
 st.set_page_config(page_title="gentrade — strategy detail", layout="wide")
@@ -37,8 +38,12 @@ except ApiError as e:
     st.stop()
 
 st.subheader("Chromosome")
-st.metric("rank", strat["rank"])
-st.metric("fitness (train)", fmt(strat.get("fitness"), "+.4f"))
+st.metric("rank", strat["rank"], help=METRIC_HELP["rank"])
+st.metric(
+    "fitness (train)",
+    fmt(strat.get("fitness"), "+.4f"),
+    help=METRIC_HELP["fitness"],
+)
 st.markdown("**Parsed pandas query**")
 st.code(strat["parsed_query"], language="python")
 
@@ -55,11 +60,21 @@ except ApiError as e:
 
 m = bt["test_metrics"] or {}
 metric_cols = st.columns(5)
-metric_cols[0].metric("trades", m.get("n_trades", 0))
-metric_cols[1].metric("win rate", fmt(m.get("win_rate"), ".2%"))
-metric_cols[2].metric("expectancy", fmt(m.get("expectancy"), "+.4f"))
-metric_cols[3].metric("sharpe", fmt(m.get("sharpe"), "+.2f"))
-metric_cols[4].metric("max DD", fmt(m.get("max_drawdown"), "+.4f"))
+metric_cols[0].metric("trades", m.get("n_trades", 0), help=METRIC_HELP["n_trades"])
+metric_cols[1].metric(
+    "win rate", fmt(m.get("win_rate"), ".2%"), help=METRIC_HELP["win_rate"]
+)
+metric_cols[2].metric(
+    "expectancy",
+    fmt(m.get("expectancy"), "+.4f"),
+    help=METRIC_HELP["expectancy"],
+)
+metric_cols[3].metric(
+    "sharpe", fmt(m.get("sharpe"), "+.2f"), help=METRIC_HELP["sharpe"]
+)
+metric_cols[4].metric(
+    "max DD", fmt(m.get("max_drawdown"), "+.4f"), help=METRIC_HELP["max_drawdown"]
+)
 
 trades = bt.get("test_trades") or []
 if not trades:
@@ -88,6 +103,7 @@ fig.update_layout(
     height=320,
 )
 st.plotly_chart(fig, use_container_width=True)
+st.caption(CHART_HELP["equity_curve"])
 
 # ---------------- drawdown ----------------
 st.markdown("**Drawdown**")
@@ -104,6 +120,7 @@ fig_dd.update_layout(
     height=240,
 )
 st.plotly_chart(fig_dd, use_container_width=True)
+st.caption(CHART_HELP["drawdown_curve"])
 
 # ---------------- trade scatter ----------------
 st.markdown("**Trade scatter** (entry time vs P&L)")
@@ -124,6 +141,7 @@ fig_sc.update_layout(
     height=320,
 )
 st.plotly_chart(fig_sc, use_container_width=True)
+st.caption(CHART_HELP["trade_scatter"])
 
 # ---------------- raw table ----------------
 with st.expander("trades"):
@@ -173,10 +191,12 @@ if st.button("Compare", disabled=not choice):
                 })
             cmp_df = pd.DataFrame(cmp_rows)
             st.dataframe(cmp_df, use_container_width=True, hide_index=True)
+            st.caption(CHART_HELP["cross_asset_table"])
             base = cmp_resp.get("base_asset")
             if base:
                 st.caption(
                     f"This strategy was trained on `{base}`. Compare its "
-                    f"out-of-sample test metrics there to the per-asset rows "
-                    f"above — large drops on other assets are the curve-fit signal."
+                    f"out-of-sample test metrics there to the per-asset "
+                    f"rows above — large drops on other assets are the "
+                    f"curve-fit signal."
                 )

@@ -20,6 +20,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
+from gentrade.ui.copy import CHART_HELP, METRIC_HELP
 from gentrade.ui.format import fmt
 
 st.set_page_config(page_title="gentrade — run detail", layout="wide")
@@ -46,21 +47,33 @@ def _render(run: dict) -> None:
     """Render the body of the page for the given run snapshot."""
     # ---------------- headline ----------------
     top = st.columns(4)
-    top[0].metric("Status", run["status"])
-    top[1].metric("Generations done", run["current_generation"])
-    top[2].metric("Overfitting gap", fmt(run.get("overfitting_gap"), "+.4f"))
+    top[0].metric("Status", run["status"], help=METRIC_HELP["status"])
+    top[1].metric(
+        "Generations done",
+        run["current_generation"],
+        help=METRIC_HELP["current_generation"],
+    )
+    top[2].metric(
+        "Overfitting gap",
+        fmt(run.get("overfitting_gap"), "+.4f"),
+        help=METRIC_HELP["overfitting_gap"],
+    )
     chosen = run.get("chosen_strategy_id")
     with top[3]:
         if chosen:
             chosen_url = f"/Strategy_detail?run_id={run_id}&strategy_id={chosen}"
             st.markdown(
-                f"<div style='font-size:0.875rem;color:#888;'>Chosen strategy</div>"
+                f"<div style='font-size:0.875rem;color:#888;' "
+                f"title='{METRIC_HELP['chosen_strategy']}'>"
+                f"Chosen strategy</div>"
                 f"<div style='font-size:1.5rem;'><a href='{chosen_url}' "
                 f"target='_self'>{chosen}</a></div>",
                 unsafe_allow_html=True,
             )
         else:
-            st.metric("Chosen strategy", "—")
+            st.metric(
+                "Chosen strategy", "—", help=METRIC_HELP["chosen_strategy"]
+            )
 
     with st.expander("manifest"):
         st.json(run["manifest"])
@@ -107,13 +120,7 @@ def _render(run: dict) -> None:
             height=380,
         )
         st.plotly_chart(fig, use_container_width=True)
-
-        st.caption(
-            "Solid = max fitness, dotted = median. When the orange "
-            "(validation) lines peel away from the blue (train) lines, "
-            "the GA is over-fitting — every additional generation makes "
-            "out-of-sample worse."
-        )
+        st.caption(CHART_HELP["fitness_curves"])
     else:
         st.info("No generations evaluated yet. Refresh after a few seconds.")
 
@@ -134,10 +141,23 @@ def _render(run: dict) -> None:
                 st.metric(
                     "n_trades",
                     m.get("n_trades") if m.get("n_trades") is not None else "—",
+                    help=METRIC_HELP["n_trades"],
                 )
-                st.metric("expectancy", fmt(m.get("expectancy"), "+.4f"))
-                st.metric("sharpe", fmt(m.get("sharpe"), "+.2f"))
-                st.metric("max_dd", fmt(m.get("max_drawdown"), "+.4f"))
+                st.metric(
+                    "expectancy",
+                    fmt(m.get("expectancy"), "+.4f"),
+                    help=METRIC_HELP["expectancy"],
+                )
+                st.metric(
+                    "sharpe",
+                    fmt(m.get("sharpe"), "+.2f"),
+                    help=METRIC_HELP["sharpe"],
+                )
+                st.metric(
+                    "max_dd",
+                    fmt(m.get("max_drawdown"), "+.4f"),
+                    help=METRIC_HELP["max_drawdown"],
+                )
 
         if chosen:
             st.markdown(
