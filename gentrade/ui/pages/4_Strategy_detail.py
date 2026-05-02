@@ -25,7 +25,10 @@ if not run_id or not strategy_id:
     st.info("Enter both ids (or use the **Run detail** page's link to populate them).")
     st.stop()
 
-st.markdown(f"← [back to run detail](/Run_detail?run_id={run_id})")
+st.markdown(
+    f'← <a href="/Run_detail?run_id={run_id}" target="_self">back to run detail</a>',
+    unsafe_allow_html=True,
+)
 
 if st.button("Refresh"):
     st.rerun()

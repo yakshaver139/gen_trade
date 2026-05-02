@@ -21,7 +21,7 @@ import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
 from gentrade.ui.copy import CHART_HELP, METRIC_HELP
-from gentrade.ui.format import fmt
+from gentrade.ui.format import fmt, link, render_html_table
 
 st.set_page_config(page_title="gentrade — run detail", layout="wide")
 st.title("Run detail")
@@ -127,42 +127,79 @@ def _render(run: dict) -> None:
     # ---------------- terminal report metrics ----------------
     if run["status"] == "reported":
         st.subheader("Headline metrics")
-        cols = st.columns(5)
-        for i, (label, key) in enumerate([
-            ("Train", "train_metrics"),
-            ("Validation", "validation_metrics"),
-            ("Test", "test_metrics"),
-            ("Buy & hold", "buy_and_hold_test"),
-            ("Random entry", "random_entry_test"),
-        ]):
-            m = run.get(key) or {}
-            with cols[i]:
-                st.markdown(f"**{label}**")
-                st.metric(
-                    "n_trades",
-                    m.get("n_trades") if m.get("n_trades") is not None else "—",
-                    help=METRIC_HELP["n_trades"],
-                )
-                st.metric(
-                    "expectancy",
-                    fmt(m.get("expectancy"), "+.4f"),
-                    help=METRIC_HELP["expectancy"],
-                )
-                st.metric(
-                    "sharpe",
-                    fmt(m.get("sharpe"), "+.2f"),
-                    help=METRIC_HELP["sharpe"],
-                )
-                st.metric(
-                    "max_dd",
-                    fmt(m.get("max_drawdown"), "+.4f"),
-                    help=METRIC_HELP["max_drawdown"],
-                )
+        windows = [
+            ("train_metrics", "Train"),
+            ("validation_metrics", "Validation"),
+            ("test_metrics", "Test"),
+            ("buy_and_hold_test", "Buy & hold"),
+            ("random_entry_test", "Random entry"),
+        ]
+
+        def _cell(value: float | int | None, kind: str) -> dict:
+            """Render one metric value with sign-based colouring where it's meaningful."""
+            if kind == "n_trades":
+                if value is None:
+                    return "—"
+                return str(int(value))
+            text = fmt(
+                value, "+.4f" if kind != "sharpe" else "+.2f", default="—"
+            )
+            if value is None or text == "—":
+                return text
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                return text
+            if kind in ("expectancy", "sharpe"):
+                colour = "#2ca02c" if v > 0 else "#d62728" if v < 0 else "#888"
+                return {"html": f'<span style="color:{colour};font-weight:600;">{text}</span>'}
+            if kind == "max_drawdown":
+                # Always ≤ 0; deeper drawdowns get a redder background.
+                magnitude = min(1.0, abs(v) / 0.30)  # cap at 30% drawdown
+                alpha = 0.12 + 0.40 * magnitude
+                return {
+                    "html": (
+                        f'<span style="background-color:rgba(214,39,40,{alpha:.2f});'
+                        f'padding:0.1rem 0.4rem;border-radius:3px;'
+                        f'color:#d62728;font-weight:600;">{text}</span>'
+                    )
+                }
+            return text
+
+        rows_html: list[dict] = []
+        metric_specs = [
+            ("n_trades", "n_trades", "n_trades"),
+            ("expectancy", "expectancy", "expectancy"),
+            ("sharpe", "sharpe", "sharpe"),
+            ("max_drawdown", "max_dd", "max_drawdown"),
+        ]
+        for metric_key, label_text, kind in metric_specs:
+            row: dict = {
+                "metric": {
+                    "html": (
+                        f'<span title="{METRIC_HELP[metric_key]}">'
+                        f'<b>{label_text}</b></span>'
+                    )
+                }
+            }
+            for win_key, _ in windows:
+                m = run.get(win_key) or {}
+                row[win_key] = _cell(m.get(metric_key), kind)
+            rows_html.append(row)
+
+        columns = [{"key": "metric", "label": "", "align": "left"}] + [
+            {"key": k, "label": label, "align": "right"} for k, label in windows
+        ]
+        st.markdown(
+            render_html_table(columns, rows_html),
+            unsafe_allow_html=True,
+        )
 
         if chosen:
             st.markdown(
-                f"➡️ [open chosen strategy → Strategy detail]"
-                f"(/Strategy_detail?run_id={run_id}&strategy_id={chosen})"
+                f'➡️ <a href="/Strategy_detail?run_id={run_id}&strategy_id={chosen}" '
+                f'target="_self">open chosen strategy → Strategy detail</a>',
+                unsafe_allow_html=True,
             )
 
     # ---------------- final generation population ----------------
@@ -176,26 +213,29 @@ def _render(run: dict) -> None:
         else:
             strategies = gen_detail.get("strategies", [])
             if strategies:
-                df_pop = pd.DataFrame(strategies)
-                df_pop["fitness"] = df_pop["fitness"].apply(lambda x: fmt(x, "+.4f"))
-                df_pop["link"] = df_pop["id"].apply(
-                    lambda sid: f"/Strategy_detail?run_id={run_id}&strategy_id={sid}"
-                )
-                st.dataframe(
-                    df_pop[["link", "rank", "id", "fitness", "parsed_query"]],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "link": st.column_config.LinkColumn(
-                            "Open", display_text="→ strategy detail",
+                pop_columns = [
+                    {"key": "open", "label": "Open"},
+                    {"key": "rank", "label": "Rank", "align": "right"},
+                    {"key": "id", "label": "Strategy id"},
+                    {"key": "fitness", "label": "Train fitness", "align": "right"},
+                    {"key": "parsed_query", "label": "Parsed pandas query"},
+                ]
+                pop_rows = [
+                    {
+                        "open": link(
+                            f"/Strategy_detail?run_id={run_id}&strategy_id={s['id']}",
+                            "→ strategy detail",
                         ),
-                        "rank": st.column_config.NumberColumn("Rank", width="small"),
-                        "id": st.column_config.TextColumn("Strategy id"),
-                        "fitness": st.column_config.TextColumn("Train fitness"),
-                        "parsed_query": st.column_config.TextColumn(
-                            "Parsed pandas query", width="large"
-                        ),
-                    },
+                        "rank": s.get("rank", ""),
+                        "id": s.get("id", "")[:8] + "…",
+                        "fitness": fmt(s.get("fitness"), "+.4f"),
+                        "parsed_query": s.get("parsed_query", ""),
+                    }
+                    for s in strategies
+                ]
+                st.markdown(
+                    render_html_table(pop_columns, pop_rows),
+                    unsafe_allow_html=True,
                 )
 
 
