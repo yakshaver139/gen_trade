@@ -6,6 +6,7 @@ Rendered as an HTML table (rather than ``st.dataframe`` with
 """
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from gentrade.ui.api_client import ApiClient, ApiError
@@ -43,18 +44,28 @@ columns = [
 ]
 
 
+def _format_ts(value) -> str:
+    """Render a timestamp for display.
+
+    The API returns ISO strings (Pydantic v2 serialises datetimes as
+    JSON strings); ``pd.Timestamp`` parses both strings and datetimes,
+    which keeps this resilient to either.
+    """
+    if not value:
+        return ""
+    return pd.Timestamp(value).isoformat(sep=" ", timespec="seconds")
+
+
 def _render_row(r: dict) -> dict:
     run_id = r["id"]
     chosen = r.get("chosen_strategy_id")
-    started = r.get("started_at")
-    finished = r.get("finished_at")
     return {
         "run_link": link(f"/Run_detail?run_id={run_id}", "→ run detail"),
         "id": run_id[:8] + "…",
         "status": r.get("status", ""),
         "current_generation": r.get("current_generation", ""),
-        "started_at": started.isoformat(timespec="seconds") if started else "",
-        "finished_at": finished.isoformat(timespec="seconds") if finished else "",
+        "started_at": _format_ts(r.get("started_at")),
+        "finished_at": _format_ts(r.get("finished_at")),
         "seed": r.get("seed", ""),
         "chosen_strategy_id": (chosen[:8] + "…") if chosen else "—",
         "strategy_link": (
