@@ -336,6 +336,14 @@ def test_post_backtest_reruns_saved_strategy(client):
         for k in ("entry_time", "entry_price", "exit_time", "exit_price",
                   "outcome", "return"):
             assert k in first
+    # test_bars carries OHLC bars for the candlestick chart, downsampled
+    assert "test_bars" in bt
+    assert isinstance(bt["test_bars"], list)
+    assert len(bt["test_bars"]) <= 1000  # server-side cap
+    if bt["test_bars"]:
+        first_bar = bt["test_bars"][0]
+        for k in ("open_ts", "open", "high", "low", "close", "volume"):
+            assert k in first_bar
 
 
 def test_sse_events_stream_reports_progress_and_terminates(client):

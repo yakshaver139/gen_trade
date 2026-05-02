@@ -109,6 +109,14 @@ CHART_HELP: dict[str, str] = {
         "(TARGET_HIT / STOPPED_OUT / NO_CLOSE_IN_WINDOW). Clusters of "
         "red mean the strategy is exposed to a regime it doesn't handle."
     ),
+    "candlestick": (
+        "Test-window OHLC candles, server-side downsampled to ≤1000 bars "
+        "via OHLC aggregation. Blue triangles ▲ = entries; coloured "
+        "triangles ▼ = exits — green for target_hit, red for stopped_out, "
+        "grey for no_close_in_window. Hover any marker for the outcome + "
+        "P&L. The candlestick is the asset's price; the equity curve "
+        "below is the strategy's account."
+    ),
     "cross_asset_table": (
         "Each row is the same chromosome re-run on a different asset's "
         "test slice. Big drops vs. the row for the run's training asset "

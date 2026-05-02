@@ -148,6 +148,22 @@ class BacktestRequest(BaseModel):
     strategy_id: str
 
 
+class BarOut(BaseModel):
+    """A single OHLCV bar for UI candlestick rendering.
+
+    Server-side downsampled to a manageable count via proper OHLC
+    resampling (open=first, high=max, low=min, close=last) — sending
+    the raw 16k-row test slice to a browser is wasteful and slow.
+    """
+
+    open_ts: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
 class TradeOut(BaseModel):
     """A single trade from a window's evaluation, surfaced for UI charts."""
 
@@ -175,6 +191,10 @@ class BacktestResponse(BaseModel):
     # are intentionally not exposed yet — too easy to read them as the
     # number to optimise against, which is the bug Phase 1 closed.
     test_trades: list[TradeOut] = Field(default_factory=list)
+    # Test-window OHLC for the candlestick chart. Server-side
+    # downsampled to ≤1000 bars (proper OHLC resampling) so the UI
+    # can render without choking.
+    test_bars: list[BarOut] = Field(default_factory=list)
 
 
 class AssetOut(BaseModel):

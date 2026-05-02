@@ -59,6 +59,13 @@
           "random_entry_test": {
             "$ref": "#/components/schemas/PerformanceMetricsOut"
           },
+          "test_bars": {
+            "items": {
+              "$ref": "#/components/schemas/BarOut"
+            },
+            "title": "Test Bars",
+            "type": "array"
+          },
           "test_metrics": {
             "$ref": "#/components/schemas/PerformanceMetricsOut"
           },
@@ -86,6 +93,46 @@
           "overfitting_gap"
         ],
         "title": "BacktestResponse",
+        "type": "object"
+      },
+      "BarOut": {
+        "description": "A single OHLCV bar for UI candlestick rendering.\n\nServer-side downsampled to a manageable count via proper OHLC\nresampling (open=first, high=max, low=min, close=last) \u2014 sending\nthe raw 16k-row test slice to a browser is wasteful and slow.",
+        "properties": {
+          "close": {
+            "title": "Close",
+            "type": "number"
+          },
+          "high": {
+            "title": "High",
+            "type": "number"
+          },
+          "low": {
+            "title": "Low",
+            "type": "number"
+          },
+          "open": {
+            "title": "Open",
+            "type": "number"
+          },
+          "open_ts": {
+            "format": "date-time",
+            "title": "Open Ts",
+            "type": "string"
+          },
+          "volume": {
+            "title": "Volume",
+            "type": "number"
+          }
+        },
+        "required": [
+          "open_ts",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volume"
+        ],
+        "title": "BarOut",
         "type": "object"
       },
       "CreateRunRequest": {

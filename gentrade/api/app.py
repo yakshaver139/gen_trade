@@ -35,6 +35,7 @@ from gentrade.api.schemas import (
     AssetOut,
     BacktestRequest,
     BacktestResponse,
+    BarOut,
     CreateRunRequest,
     CreateRunResponse,
     CrossAssetRequest,
@@ -389,6 +390,7 @@ def create_app(
         test_trades = [
             _trade_out(row) for _, row in test_trades_df.iterrows()
         ]
+        test_bars_out = _resample_bars_for_viz(test_bars, target_n=1000)
 
         return BacktestResponse(
             chosen_strategy_id=report.chosen_strategy_id,
@@ -399,6 +401,7 @@ def create_app(
             random_entry_test=_metrics_out(report.random_entry_test),
             overfitting_gap=report.overfitting_gap if not _isnan(report.overfitting_gap) else 0.0,
             test_trades=test_trades,
+            test_bars=test_bars_out,
         )
 
     @app.post("/backtests/cross_asset", response_model=CrossAssetResponse)
@@ -483,6 +486,49 @@ def create_app(
         )
 
     return app
+
+
+def _resample_bars_for_viz(
+    bars: pd.DataFrame, target_n: int = 1000
+) -> list[BarOut]:
+    """Downsample bars to ≤target_n rows via proper OHLC resampling.
+
+    Sending a 16k-row test slice to a browser is wasteful and Plotly's
+    candlestick gets sluggish past ~2000 candles. Each output bar is a
+    proper OHLC aggregate of N consecutive input bars
+    (open=first, high=max, low=min, close=last, volume=sum).
+    """
+    if bars.empty:
+        return []
+    n = len(bars)
+    if n <= target_n:
+        bars_out = bars.copy()
+    else:
+        span_seconds = (
+            pd.Timestamp(bars["open_ts"].iloc[-1])
+            - pd.Timestamp(bars["open_ts"].iloc[0])
+        ).total_seconds()
+        # Bucket size in minutes to land on roughly target_n bars.
+        freq_min = max(1, int((span_seconds / 60) / target_n))
+        df = bars.set_index("open_ts")
+        bars_out = (
+            df.resample(f"{freq_min}min")
+            .agg({"open": "first", "high": "max",
+                  "low": "min", "close": "last", "volume": "sum"})
+            .dropna()
+            .reset_index()
+        )
+    return [
+        BarOut(
+            open_ts=pd.Timestamp(row["open_ts"]).to_pydatetime(),
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row.get("volume", 0.0)),
+        )
+        for _, row in bars_out.iterrows()
+    ]
 
 
 def _trade_out(row) -> TradeOut:

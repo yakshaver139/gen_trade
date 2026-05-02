@@ -89,6 +89,83 @@ tdf["equity"] = (1.0 + tdf["return"]).cumprod()
 tdf["running_peak"] = tdf["equity"].cummax()
 tdf["drawdown"] = (tdf["equity"] - tdf["running_peak"]) / tdf["running_peak"]
 
+# ---------------- candlestick ----------------
+bars_data = bt.get("test_bars") or []
+if bars_data:
+    bdf = pd.DataFrame(bars_data)
+    bdf["open_ts"] = pd.to_datetime(bdf["open_ts"])
+
+    st.markdown("**Price action** (test window, OHLC)")
+    fig_candle = go.Figure(
+        data=[
+            go.Candlestick(
+                x=bdf["open_ts"],
+                open=bdf["open"],
+                high=bdf["high"],
+                low=bdf["low"],
+                close=bdf["close"],
+                name="OHLC",
+                increasing_line_color="#2ca02c",
+                decreasing_line_color="#d62728",
+                showlegend=False,
+            )
+        ]
+    )
+
+    if not tdf.empty:
+        # Entry markers
+        fig_candle.add_trace(
+            go.Scatter(
+                x=tdf["entry_time"],
+                y=tdf["entry_price"],
+                mode="markers",
+                marker={"symbol": "triangle-up", "size": 11,
+                        "color": "#1f77b4", "line": {"width": 1, "color": "white"}},
+                name="entry",
+                customdata=tdf[["outcome", "return"]].values,
+                hovertemplate=(
+                    "<b>entry</b><br>%{x}<br>price %{y:.2f}<br>"
+                    "outcome %{customdata[0]}<br>return %{customdata[1]:+.4f}"
+                    "<extra></extra>"
+                ),
+            )
+        )
+        # Exit markers — colour by outcome
+        outcome_colour = {
+            "TARGET_HIT": "#2ca02c",
+            "STOPPED_OUT": "#d62728",
+            "NO_CLOSE_IN_WINDOW": "#888",
+        }
+        exit_colours = [outcome_colour.get(o, "#888") for o in tdf["outcome"]]
+        fig_candle.add_trace(
+            go.Scatter(
+                x=tdf["exit_time"],
+                y=tdf["exit_price"],
+                mode="markers",
+                marker={"symbol": "triangle-down", "size": 11,
+                        "color": exit_colours,
+                        "line": {"width": 1, "color": "white"}},
+                name="exit",
+                customdata=tdf[["outcome", "return"]].values,
+                hovertemplate=(
+                    "<b>exit</b><br>%{x}<br>price %{y:.2f}<br>"
+                    "outcome %{customdata[0]}<br>return %{customdata[1]:+.4f}"
+                    "<extra></extra>"
+                ),
+            )
+        )
+
+    fig_candle.update_layout(
+        xaxis_title="time",
+        yaxis_title="price",
+        margin={"t": 20},
+        height=460,
+        xaxis_rangeslider_visible=False,
+        legend={"orientation": "h", "y": 1.05, "x": 0},
+    )
+    st.plotly_chart(fig_candle, use_container_width=True)
+    st.caption(CHART_HELP["candlestick"])
+
 # ---------------- equity curve ----------------
 st.markdown("**Equity curve** (per-trade compounded, starts at 1.0)")
 fig = go.Figure()
