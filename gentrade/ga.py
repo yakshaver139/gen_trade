@@ -53,6 +53,13 @@ class GAConfig:
     # strategies that fire once and luck into a winner.
     min_trades_for_fitness: int = 3
     no_entries_fitness: float = -1000.0
+    # MutationConfig-shaped object describing per-operator weights +
+    # noise shape + invariant bounds. None resolves to
+    # ``MutationConfig.rich()`` at use site so the GAConfig stays
+    # frozen-friendly (no mutable default factories) and import cycles
+    # stay simple. Pass ``MutationConfig.legacy()`` for the old
+    # single-perturb behaviour.
+    mutation_config: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -280,9 +287,14 @@ def run_ga(
         if is_last_gen:
             next_strategies: list[dict] | None = None
         else:
+            from gentrade.mutation import MutationConfig as _MutationConfig
+
             weights = compute_weights(ranked, cfg.selection_pressure)
             next_strategies = generate_population(
-                ranked, weights, population_size=cfg.population_size
+                ranked,
+                weights,
+                population_size=cfg.population_size,
+                mutation_config=cfg.mutation_config or _MutationConfig.rich(),
             )
 
         if engine is not None and run_id is not None:

@@ -132,13 +132,34 @@ def apply_ranking(
 
 
 def generate_population(
-    ranked: pd.DataFrame, weights: dict, population_size: int = POPULATION_SIZE
+    ranked: pd.DataFrame,
+    weights: dict,
+    population_size: int = POPULATION_SIZE,
+    mutation_config=None,
+    catalogue=None,
 ) -> list[dict]:
-    """Applies ranking, cross over and mutation to create a new population"""
-    # Elitism - keep the two best solutions from the previous population
+    """Applies ranking, cross over and mutation to create a new population.
 
+    ``mutation_config``: a :class:`gentrade.mutation.MutationConfig`. If
+    None, defaults to the rich seven-operator mix. Pass
+    ``MutationConfig.legacy()`` to keep the old single-perturb behaviour
+    (the determinism tests use this).
+
+    ``catalogue``: indicator catalogue for the structural mutation
+    operators. Defaults to ``LOADED_INDICATORS`` (the trusted catalogue).
+    """
+    # Local imports to avoid a circular dep — mutation module reads
+    # genetic.LOADED_INDICATORS via gentrade.generate_strategy.
+    from gentrade.generate_strategy import LOADED_INDICATORS
+    from gentrade.mutation import MutationConfig, mutate_strategy
+
+    if mutation_config is None:
+        mutation_config = MutationConfig.rich()
+    if catalogue is None:
+        catalogue = LOADED_INDICATORS
+
+    # Elitism - keep the two best solutions from the previous population
     ranked = ranked.reset_index()
-    # elitism
     population = [ranked.iloc[0].strategy, ranked.iloc[1].strategy]
     logger = get_logger(__name__)
     logger.info(f"generating new population of length {population_size}")
@@ -148,7 +169,10 @@ def generate_population(
     while len(population) < population_size:
         x, y = select_parents(ranked, _weights)
         offspring = cross_over_ppx(x.strategy, y.strategy)
-        population.append(mutate(offspring))
+        mutated, _outcome = mutate_strategy(
+            offspring, mutation_config, catalogue, random
+        )
+        population.append(mutated)
     logger.info("Population created")
     return population
 
@@ -193,16 +217,18 @@ def cross_over_ppx(strat_x: dict, strat_y: dict) -> dict:
 
 
 def mutate(strategy: dict) -> dict:
-    _strat = deepcopy(strategy)
-    abs_strats = [x for x in _strat["indicators"] if x["absolute"]]
+    """Apply one mutation. Now a thin shim over :func:`gentrade.mutation.mutate_strategy`
+    with the rich seven-operator config; the legacy single-perturb behaviour
+    is available via ``MutationConfig.legacy()`` for tests that pin the old
+    determinism guarantees.
+    """
+    from gentrade.generate_strategy import LOADED_INDICATORS
+    from gentrade.mutation import MutationConfig, mutate_strategy
 
-    if abs_strats:
-        mutate_ix = random.choice(range(len(abs_strats)))
-        mutate_ind = abs_strats[mutate_ix]
-        mutate_percent = random.choice(range(-20, 20)) / 100
-        mutate_ind["abs_value"] = mutate_ind["abs_value"] * (1 + mutate_percent)
-
-    return _strat
+    new_strategy, _ = mutate_strategy(
+        strategy, MutationConfig.rich(), LOADED_INDICATORS, random
+    )
+    return new_strategy
 
 
 def load_trading_data():
