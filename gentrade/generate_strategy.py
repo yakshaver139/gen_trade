@@ -55,11 +55,22 @@ def choose_num_indicators(max_indicators: int) -> int:
 
 
 def make_strategy_from_indicators(indicators: Sequence, conjunctions=CONJUNCTIONS) -> dict:
-    """Wrap an iterable of indicators into a well-formed strategy dict."""
+    """Wrap an iterable of indicators into a well-formed strategy dict.
+
+    The first conjunction is always ``"and"`` to satisfy the spec's
+    `FirstConjunctionIsAnd` invariant — the parsed query parenthesises
+    cleanly only if disjunctions never lead. Without this, every
+    crossover child had a ~50% chance of silently violating the
+    invariant (``generate`` honours it; ``cross_over_ppx`` calls this
+    helper which previously did not).
+    """
+    conj = [random.choice(conjunctions) for _ in range(len(indicators) - 1)]
+    if conj:
+        conj[0] = "and"
     return dict(
         id=str(uuid.uuid4()),
         indicators=list(indicators),
-        conjunctions=[random.choice(conjunctions) for _ in range(len(indicators) - 1)],
+        conjunctions=conj,
     )
 
 
