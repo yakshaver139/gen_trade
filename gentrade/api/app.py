@@ -51,6 +51,7 @@ from gentrade.api.schemas import (
     RunDetailOut,
     RunSummaryOut,
     StrategyOut,
+    StrategySummaryOut,
     TradeOut,
     WindowOut,
 )
@@ -395,6 +396,34 @@ def create_app(
                 for e in sorted(
                     run.breeding_events,
                     key=lambda x: (x.generation_number, x.id),
+                )
+            ]
+
+    @app.get(
+        "/runs/{run_id}/strategies",
+        response_model=list[StrategySummaryOut],
+    )
+    def list_run_strategies(run_id: str, _: None = auth) -> list[StrategySummaryOut]:
+        """Every strategy across every generation, sorted (gen, rank).
+
+        Slim payload (no indicators / parsed_query) for the lineage
+        visualisation; full strategy detail still lives at
+        ``GET /runs/{run_id}/strategies/{strategy_id}``.
+        """
+        with Session(engine) as session:
+            run = session.get(RunRow, run_id)
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+            return [
+                StrategySummaryOut(
+                    generation_number=s.generation_number,
+                    id=s.id,
+                    rank=s.rank,
+                    fitness=s.fitness,
+                )
+                for s in sorted(
+                    run.strategies,
+                    key=lambda x: (x.generation_number, x.rank),
                 )
             ]
 

@@ -250,18 +250,98 @@ GENTRADE_API_KEY=<paste_from_terminal_1> ./scripts/dev_ui.sh
 
 Pages (left sidebar):
 
-- **Runs** — list of persisted runs, status + headline metrics
-- **New Run** — form that POSTs `/runs` (asset, population size, generations, seed,
-  selection pressure, costs)
-- **Run detail** — fitness curves (train max + median, validation max), terminal
-  metrics, manifest. Paste a run id at the top
-- **Strategy detail** — chromosome + parsed pandas query, equity curve, drawdown,
-  per-trade scatter. Both run id and strategy id required (the Run detail page
-  prints them ready to copy)
+- **Runs** — list of persisted runs, status + headline metrics. Every id is a
+  deep link into Run detail / Strategy detail.
+- **New Run** — toggle between **Auto-generate** (server samples from the
+  trusted catalogue) and **Seed a strategy**. Seed mode shows editable rows
+  of `(indicator, op, abs_value)` plus conjunctions; indicators are grouped
+  by type (`[momentum]` / `[trend]` / `[volatility]` / `[volume]`) and each
+  row has a **?** button that opens a modal explaining the indicator (formula,
+  description, example reading).
+- **Run detail** — fitness curves (train + validation, max + median), headline
+  metrics, manifest, and three live-refreshing visualisations of the GA
+  itself:
+  - **Breeding activity** — stacked bar chart of mutation operators per
+    generation + an event log table (each row tinted: grey for elites, blue
+    for parameter mutations, green for structural ones, red for failed-to-
+    apply). See [Mutation operators](#mutation-operators) below.
+  - **Lineage tree** — a Plotly node-edge graph in an expander. Each dot is
+    one strategy positioned at `(generation, rank)`; lines connect every
+    child to its two crossover parents in the previous generation, coloured
+    by the mutation operator that produced the child. Node colour scales
+    with train-window fitness on a viridis ramp. Hover any node for its id,
+    rank, and fitness.
+  - **Generation N population** — table of the latest generation's
+    chromosomes with parsed-query strings; click a row to open Strategy
+    detail.
+- **Strategy detail** — chromosome + parsed pandas query, the test-window
+  candlestick chart with entry/exit markers, equity curve, drawdown, trade
+  scatter, and a **Cross-asset robustness** comparison against any other
+  registered asset.
 
-Auto-refresh is intentionally not wired in v1 — every page has a **Refresh** button.
-For a longer-running run, click Refresh every few seconds; the per-generation curve
-is the live progress signal.
+The body of Run detail re-renders every 5 seconds while a run is `in_progress`
+via `st.fragment(run_every=5)`; once the status flips to `reported` the page
+becomes static. The breeding-activity bar chart and the lineage tree both
+sit inside that fragment so you can watch operators fire in real time.
+
+## Mutation operators
+
+The dissertation (and the original codebase) had a single mutation step: pick
+one absolute-threshold signal in the chromosome, multiply its `abs_value` by
+a uniform `[-0.20, +0.20]` factor. Relative-only chromosomes (signals comparing
+against a moving average / previous bar / sibling indicator rather than a
+number) were skipped entirely. With population_size = 10 the GA could only
+ever fine-tune thresholds on chromosomes the *initial random generator*
+happened to draw — premature convergence was structural.
+
+The current mutator (`gentrade/mutation.py`) replaces that single operator
+with seven probabilistic ones, all spec-invariant by construction:
+
+| Operator | What it does |
+|---|---|
+| `perturb_threshold` | `abs_value × (1 + noise)`, noise from `N(0, σ)` (Gaussian) by default. Result clamped to the per-indicator `[min, max]` of the catalogue's known thresholds — `RSI ≥ 70` won't drift to 130. |
+| `flip_operator` | Swap `>=↔<=` or `>↔<` on a chosen signal. Class-agnostic. |
+| `swap_indicator` | Replace one signal with another of the same class (preserves `SameClassLimit`) and matching shape (absolute / relative). |
+| `flip_conjunction` | `and↔or` at index ≥ 1. Index 0 is locked to `and` so `FirstConjunctionIsAnd` is preserved by construction. |
+| `add_signal` | Append a signal of an under-budget class while length < `max_signals`. New conjunction inserted as `and`. |
+| `remove_signal` | Drop a signal while length > `min_signals`; force `conjunctions[0]="and"` unconditionally. |
+| `swap_rel_target` | On a relative signal, swap `rel_value` to another catalogue entry for the same indicator (e.g. `PREVIOUS_PERIOD → MA`). The original mutator never touched relative chromosomes; this lets the GA actually search them. |
+
+Operators that find themselves inapplicable to a chromosome (e.g.
+`remove_signal` at `min_signals`) record a no-op in `MutationOutcome` rather
+than retrying — keeps wall-clock bounded and the per-operator hit rate
+observable in the live charts.
+
+`MutationConfig` carries per-operator weights (default rates: `perturb 0.30`,
+`flip_op 0.15`, `swap_ind 0.15`, the rest `0.10`), threshold-noise shape
+(`gaussian`/`uniform`), `threshold_scale`, and the spec invariant bounds.
+`MutationConfig.legacy()` reproduces the old single-perturb behaviour
+exactly — it's what the determinism / resume-byte-equivalence tests pin
+against.
+
+### Live visualisation
+
+Every breeding step is persisted as a `BreedingEvent`
+`(generation, child_id, parent_a_id, parent_b_id, operator, applied, reason)`
+and surfaced via `GET /runs/{id}/breeding_events`. Run detail renders two
+live-refreshing views from this stream:
+
+1. **Operator-counts stacked bar** per generation — a healthy run shows a
+   mix of structural (greens / purples) and parameter (blues) bars; a run
+   dominated by `perturb_threshold` is the old mutator's signature.
+2. **Lineage tree** — every strategy across every generation as a node, with
+   edges connecting each child to its two crossover parents, coloured by the
+   mutation operator that produced the child. Useful for spotting
+   monocultures: when one chromosome dominates the parent pool you'll see a
+   visual fan-out from a single rank-0 node across many generations.
+
+Pre-existing bug fixed alongside this work: `make_strategy_from_indicators`
+random-sampled every conjunction including index 0, while the spec's
+`FirstConjunctionIsAnd` invariant requires the first to be `"and"` so
+disjunctions parenthesise cleanly. Every crossover child had a ~50% chance
+of silently violating it. `gentrade/generate_strategy.py` now forces
+`conjunctions[0] = "and"` after the random pick; pinned by
+`tests/test_genetic.py`.
 
 ## Docker
 

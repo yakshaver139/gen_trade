@@ -109,6 +109,16 @@ CHART_HELP: dict[str, str] = {
         "(TARGET_HIT / STOPPED_OUT / NO_CLOSE_IN_WINDOW). Clusters of "
         "red mean the strategy is exposed to a regime it doesn't handle."
     ),
+    "lineage_tree": (
+        "Strategy DAG across generations. Each dot is a strategy "
+        "(x = generation, y = rank within that generation; rank 0 sits "
+        "at the top). Lines connect every child to its two PPX-crossover "
+        "parents in the previous generation. Edge colour matches the "
+        "operator chart above — pick a colour from the legend to spot "
+        "where each operator carried genetic material forward. Node "
+        "colour scales with train-window fitness on a viridis ramp; "
+        "hover any node for its id, rank, and fitness."
+    ),
     "operator_counts": (
         "Per-generation count of each mutation operator that fired while "
         "breeding the next population. Stacked bars: structural operators "

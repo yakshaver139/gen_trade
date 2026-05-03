@@ -450,6 +450,32 @@ def test_get_generation_one_has_no_breeding_events(client):
     assert r.json()["breeding_events"] == []
 
 
+def test_list_run_strategies_returns_flat_sorted_list(client):
+    """The flat strategies endpoint returns one row per (gen, strategy)
+    sorted by generation then rank. Used by the lineage view to
+    position nodes."""
+    c, _ = client
+    body = c.post(
+        "/runs",
+        json={"asset": "TEST-15m", "population_size": 4, "generations": 3, "seed": 42},
+        headers={"X-API-Key": API_KEY},
+    ).json()
+    _wait_for_status(c, body["run_id"], target="reported")
+
+    r = c.get(f"/runs/{body['run_id']}/strategies", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 200
+    rows = r.json()
+    # 4 strategies × 3 generations = 12 rows
+    assert len(rows) == 12
+    # Sorted by (generation_number, rank)
+    seen = [(r["generation_number"], r["rank"]) for r in rows]
+    assert seen == sorted(seen)
+    # Slim payload: no indicators / parsed_query / etc.
+    for r in rows:
+        for forbidden in ("indicators", "conjunctions", "parsed_query"):
+            assert forbidden not in r
+
+
 def test_get_generation_returns_strategies(client):
     c, _ = client
     r = c.post(

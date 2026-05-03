@@ -975,6 +975,42 @@
         "title": "StrategySpec",
         "type": "object"
       },
+      "StrategySummaryOut": {
+        "description": "Slim strategy record for bulk fetch (lineage view).\n\nReturned by GET /runs/{id}/strategies. Drops the heavy\n``indicators`` / ``conjunctions`` / ``parsed_query`` fields so a\n1000-strategy run fits in a single ~50KB payload \u2014 the lineage\nview only needs position (gen + rank) and colour (fitness).",
+        "properties": {
+          "fitness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fitness"
+          },
+          "generation_number": {
+            "title": "Generation Number",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generation_number",
+          "id",
+          "rank",
+          "fitness"
+        ],
+        "title": "StrategySummaryOut",
+        "type": "object"
+      },
       "TradeOut": {
         "description": "A single trade from a window's evaluation, surfaced for UI charts.",
         "properties": {
@@ -1677,6 +1713,66 @@
           }
         },
         "summary": "Get Generation"
+      }
+    },
+    "/runs/{run_id}/strategies": {
+      "get": {
+        "description": "Every strategy across every generation, sorted (gen, rank).\n\nSlim payload (no indicators / parsed_query) for the lineage\nvisualisation; full strategy detail still lives at\n``GET /runs/{run_id}/strategies/{strategy_id}``.",
+        "operationId": "list_run_strategies_runs__run_id__strategies_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-api-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StrategySummaryOut"
+                  },
+                  "title": "Response List Run Strategies Runs  Run Id  Strategies Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Run Strategies"
       }
     },
     "/runs/{run_id}/strategies/{strategy_id}": {

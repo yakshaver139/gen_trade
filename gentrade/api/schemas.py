@@ -178,6 +178,21 @@ class StrategyOut(BaseModel):
     parsed_query: str
 
 
+class StrategySummaryOut(BaseModel):
+    """Slim strategy record for bulk fetch (lineage view).
+
+    Returned by GET /runs/{id}/strategies. Drops the heavy
+    ``indicators`` / ``conjunctions`` / ``parsed_query`` fields so a
+    1000-strategy run fits in a single ~50KB payload — the lineage
+    view only needs position (gen + rank) and colour (fitness).
+    """
+
+    generation_number: int
+    id: str
+    rank: int
+    fitness: float | None
+
+
 class BreedingEventOut(BaseModel):
     """One breeding event surfaced for the live UI activity view."""
 

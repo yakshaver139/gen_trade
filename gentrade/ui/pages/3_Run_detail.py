@@ -309,6 +309,117 @@ def _render(run: dict) -> None:
             )
             st.caption(CHART_HELP["breeding_events_table"])
 
+    # ---------------- lineage tree ----------------
+    if events:
+        try:
+            all_strategies = client.list_strategies(run_id)
+        except ApiError as e:
+            st.error(f"failed to load strategies for lineage: {e}")
+            all_strategies = []
+
+        if all_strategies:
+            with st.expander("Lineage tree", expanded=False):
+                # Index strategies by (gen, id) → (rank, fitness) for lookup.
+                strat_idx: dict[tuple[int, str], dict] = {}
+                for s in all_strategies:
+                    strat_idx[(s["generation_number"], s["id"])] = s
+
+                # Build edge segments per operator. Each segment runs
+                # from a parent at gen-1 to the child at gen; we use
+                # NaN separators so a single trace handles many edges.
+                edge_segments: dict[str, tuple[list, list]] = {}
+                for ev in events:
+                    gen = ev["generation_number"]
+                    child_pos = strat_idx.get((gen, ev["child_id"]))
+                    if not child_pos:
+                        continue
+                    for parent_id in (ev["parent_a_id"], ev["parent_b_id"]):
+                        parent_pos = strat_idx.get((gen - 1, parent_id))
+                        if not parent_pos:
+                            continue
+                        xs, ys = edge_segments.setdefault(
+                            ev["operator"], ([], [])
+                        )
+                        xs.extend([
+                            parent_pos["generation_number"],
+                            child_pos["generation_number"],
+                            None,
+                        ])
+                        ys.extend([
+                            -parent_pos["rank"],
+                            -child_pos["rank"],
+                            None,
+                        ])
+
+                fig_lineage = go.Figure()
+                # Plot edges in the same palette as the operator chart.
+                for op in operator_palette:
+                    if op not in edge_segments:
+                        continue
+                    xs, ys = edge_segments[op]
+                    fig_lineage.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="lines",
+                        line={
+                            "color": operator_palette.get(op, "#444"),
+                            "width": 1,
+                        },
+                        opacity=0.55 if op == "(elite)" else 0.85,
+                        name=op,
+                        hoverinfo="skip",
+                        legendgroup=op,
+                    ))
+                # Catch-all for unexpected operators.
+                for op, (xs, ys) in edge_segments.items():
+                    if op in operator_palette:
+                        continue
+                    fig_lineage.add_trace(go.Scatter(
+                        x=xs, y=ys, mode="lines",
+                        line={"color": "#444", "width": 1},
+                        opacity=0.6, name=op, hoverinfo="skip",
+                    ))
+
+                # Nodes: one marker per strategy, colour by fitness.
+                node_x = [s["generation_number"] for s in all_strategies]
+                node_y = [-s["rank"] for s in all_strategies]
+                node_text = [
+                    (
+                        f"gen {s['generation_number']}<br>"
+                        f"{s['id'][:8]}…<br>rank {s['rank']}<br>"
+                        f"fitness {fmt(s.get('fitness'), '+.4f')}"
+                    )
+                    for s in all_strategies
+                ]
+                node_color = [
+                    s["fitness"] if s.get("fitness") is not None else 0.0
+                    for s in all_strategies
+                ]
+                fig_lineage.add_trace(go.Scatter(
+                    x=node_x, y=node_y, mode="markers",
+                    marker={
+                        "color": node_color,
+                        "colorscale": "Viridis",
+                        "size": 9,
+                        "line": {"width": 0.5, "color": "rgba(0,0,0,0.3)"},
+                        "colorbar": {"title": "fitness", "thickness": 12},
+                    },
+                    text=node_text,
+                    hovertemplate="%{text}<extra></extra>",
+                    name="strategies",
+                    showlegend=False,
+                ))
+
+                fig_lineage.update_layout(
+                    xaxis_title="generation",
+                    yaxis_title="rank (top = best)",
+                    yaxis={"autorange": "reversed", "tickmode": "array",
+                           "tickvals": [], "showticklabels": False},
+                    margin={"t": 20},
+                    height=480,
+                    legend={"orientation": "h", "y": 1.05},
+                )
+                st.plotly_chart(fig_lineage, use_container_width=True)
+                st.caption(CHART_HELP["lineage_tree"])
+
     # ---------------- final generation population ----------------
     final_n = run.get("current_generation") or 0
     if final_n > 0:
