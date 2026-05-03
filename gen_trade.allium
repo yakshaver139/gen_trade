@@ -98,9 +98,50 @@ enum RunStatus { in_progress | completed | reported }
 -- only.
 enum SelectionPressure { rank_linear | tournament | fitness_proportional }
 
+-- The seven mutation operators a chromosome can undergo per breed call.
+-- See BreedChildStrategy.@guidance for the full descriptions.
+enum MutationOperator {
+    perturb_threshold     -- absolute_value × (1 ± noise)
+    flip_operator         -- >= ↔ <= ; > ↔ <
+    swap_indicator        -- replace one signal with another of the same class
+    flip_conjunction      -- and ↔ or at index ≥ 1
+    add_signal            -- append a signal of an under-budget class
+    remove_signal         -- drop a signal (≥ min_signals)
+    swap_rel_target       -- swap rel_value on a relative signal
+}
+
+enum NoiseShape { uniform | gaussian }
+
 ------------------------------------------------------------
 -- Value Types
 ------------------------------------------------------------
+
+-- Per-operator weights and threshold-noise shape for the mutator.
+-- Weights are normalised at sampling time; a weight of 0 disables an
+-- operator entirely. `MutationConfig.legacy` reproduces the original
+-- single-perturb behaviour (perturb_threshold weight 1, others 0,
+-- uniform noise, no clamp).
+value MutationConfig {
+    perturb_threshold: Decimal
+    flip_operator: Decimal
+    swap_indicator: Decimal
+    flip_conjunction: Decimal
+    add_signal: Decimal
+    remove_signal: Decimal
+    swap_rel_target: Decimal
+
+    threshold_noise: NoiseShape
+    threshold_scale: Decimal
+    clamp_to_catalogue_range: Boolean
+
+    -- Invariant bounds the operators enforce per call. Carried on
+    -- MutationConfig (rather than read from the outer config block)
+    -- so unit tests can pin operator behaviour without depending on
+    -- module-level config.
+    min_signals: Integer
+    max_signals: Integer
+    max_same_class_signals: Integer
+}
 
 -- A single comparison expression like "trend_sma_fast >= 0.7" or
 -- "volume_mfi <= volume_mfi_previous". Signals are the genes that make up
@@ -380,8 +421,16 @@ config {
     max_signals: Integer = 4
     max_same_class_signals: Integer = 2
 
-    -- Mutation perturbs an absolute signal threshold by a random factor in
-    -- [-mutation_range, +mutation_range].
+    -- Mutation behaviour. The `mutation` block carries per-operator
+    -- weights plus the noise shape for threshold perturbation; see the
+    -- BreedChildStrategy guidance for the seven operators. The legacy
+    -- single-perturb mutator is `mutation = MutationConfig.legacy`.
+    mutation: MutationConfig = MutationConfig.rich
+
+    -- Threshold-perturbation scale. σ for Gaussian noise, half-range
+    -- for Uniform. Read from `mutation.threshold_scale`; kept here as
+    -- a backward-compatibility alias so existing tooling that read
+    -- mutation_range continues to find a sensible default.
     mutation_range: Decimal = 0.20
 
     -- Top N strategies copied unchanged into the next generation.
@@ -720,7 +769,7 @@ rule BreedChildStrategy {
 
     let parents = sample_distinct_pair(parents_pool, into.run.selection_pressure)
     let crossed = ppx_crossover(parents.first.strategy, parents.second.strategy)
-    let mutated = mutate_strategy(crossed, config.mutation_range)
+    let mutated = mutate_strategy(crossed, config.mutation)
 
     ensures:
         Strategy.created(
@@ -754,10 +803,48 @@ rule BreedChildStrategy {
         --   raw fitness. Provided as a comparison baseline; sensitive to
         --   fitness scale and not recommended as default.
         --
-        -- mutate_strategy: choose one absolute signal at random, multiply
-        -- its abs_value by (1 + delta) where delta is uniform in
-        -- [-mutation_range, +mutation_range]. Relative-only strategies are
-        -- left unchanged by mutation.
+        -- mutate_strategy: pick one of seven operators by configured
+        -- weight and apply it. Operators that find themselves
+        -- inapplicable (e.g. remove_signal at min_signals) record a
+        -- no-op rather than retrying — keeps wall-clock bounded and
+        -- the per-operator hit rate observable for tuning. The
+        -- legacy single-perturb behaviour is the perturb_threshold
+        -- operator with weight 1 and the other six at 0.
+        --
+        --   perturb_threshold (default 0.30): pick a random absolute
+        --     signal; new abs_value = old × (1 + delta), delta drawn
+        --     from N(0, mutation_range) (or U(-r, +r) under the
+        --     legacy config). Clamp to the catalogue's [min, max]
+        --     observed thresholds for that indicator unless the
+        --     legacy config disables clamping.
+        --
+        --   flip_operator (default 0.15): pick a random signal; swap
+        --     >= ↔ <= or > ↔ <. Class-agnostic — works on relative
+        --     signals as well as absolute ones.
+        --
+        --   swap_indicator (default 0.15): pick a random signal;
+        --     replace it with another catalogue entry whose class
+        --     matches (preserves SameClassLimit by construction) and
+        --     whose absolute / relative shape matches.
+        --
+        --   flip_conjunction (default 0.10): pick a conjunction at
+        --     index ≥ 1 and flip and ↔ or. Index 0 is never touched
+        --     so FirstConjunctionIsAnd is preserved.
+        --
+        --   add_signal (default 0.10): if length < max_signals and
+        --     some class still has same-class budget, append a
+        --     catalogue signal of that class plus an "and" conjunction.
+        --
+        --   remove_signal (default 0.10): if length > min_signals,
+        --     drop a random signal and the corresponding conjunction.
+        --     conjunctions[0] is force-set to "and" unconditionally
+        --     so dropping index 0 doesn't violate FirstConjunctionIsAnd.
+        --
+        --   swap_rel_target (default 0.10): pick a random relative
+        --     signal; swap rel_value to another catalogue entry for
+        --     the same indicator (e.g. PREVIOUS_PERIOD → MA). The
+        --     legacy mutator never touched relative-only chromosomes;
+        --     this operator gives the GA a way to actually search them.
 }
 
 ------------------------------------------------------------
