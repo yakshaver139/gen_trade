@@ -106,7 +106,9 @@ def main(
 
         logger.info("Recursing into next generation")
 
-        population = generate_population(ranking, weights, population_size)
+        # Legacy main loop discards breeding events — only the new
+        # ga.run_ga path persists them.
+        population, _events = generate_population(ranking, weights, population_size)
         main(
             trading_data,
             population,
@@ -137,21 +139,29 @@ def generate_population(
     population_size: int = POPULATION_SIZE,
     mutation_config=None,
     catalogue=None,
-) -> list[dict]:
+    generation_number: int = 0,
+) -> tuple[list[dict], list]:
     """Applies ranking, cross over and mutation to create a new population.
+
+    Returns ``(population, events)`` where ``events`` is a list of
+    :class:`gentrade.mutation.BreedingEvent` — one per child, with
+    ``operator="(elite)"`` for the elites. Used by ``run_ga`` to
+    persist a per-step audit trail of how each strategy in generation N
+    came to exist.
 
     ``mutation_config``: a :class:`gentrade.mutation.MutationConfig`. If
     None, defaults to the rich seven-operator mix. Pass
-    ``MutationConfig.legacy()`` to keep the old single-perturb behaviour
-    (the determinism tests use this).
+    ``MutationConfig.legacy()`` to keep the old single-perturb behaviour.
 
     ``catalogue``: indicator catalogue for the structural mutation
-    operators. Defaults to ``LOADED_INDICATORS`` (the trusted catalogue).
+    operators. Defaults to ``LOADED_INDICATORS``.
+
+    ``generation_number``: stamped onto each event for downstream storage.
     """
     # Local imports to avoid a circular dep — mutation module reads
     # genetic.LOADED_INDICATORS via gentrade.generate_strategy.
     from gentrade.generate_strategy import LOADED_INDICATORS
-    from gentrade.mutation import MutationConfig, mutate_strategy
+    from gentrade.mutation import BreedingEvent, MutationConfig, mutate_strategy
 
     if mutation_config is None:
         mutation_config = MutationConfig.rich()
@@ -164,17 +174,41 @@ def generate_population(
     logger = get_logger(__name__)
     logger.info(f"generating new population of length {population_size}")
 
+    events: list[BreedingEvent] = [
+        BreedingEvent(
+            generation_number=generation_number,
+            child_id=ranked.iloc[i].strategy["id"],
+            parent_a_id=ranked.iloc[i].strategy["id"],
+            parent_b_id=ranked.iloc[i].strategy["id"],
+            operator="(elite)",
+            applied=False,
+            reason="copied from previous generation",
+        )
+        for i in (0, 1)
+    ]
+
     _weights = deepcopy(weights)
 
     while len(population) < population_size:
         x, y = select_parents(ranked, _weights)
         offspring = cross_over_ppx(x.strategy, y.strategy)
-        mutated, _outcome = mutate_strategy(
+        mutated, outcome = mutate_strategy(
             offspring, mutation_config, catalogue, random
         )
         population.append(mutated)
+        events.append(
+            BreedingEvent(
+                generation_number=generation_number,
+                child_id=mutated["id"],
+                parent_a_id=x.strategy["id"],
+                parent_b_id=y.strategy["id"],
+                operator=outcome.operator,
+                applied=outcome.applied,
+                reason=outcome.reason,
+            )
+        )
     logger.info("Population created")
-    return population
+    return population, events
 
 
 def select_parents(

@@ -93,6 +93,9 @@ class ApiClient:
     def get_generation(self, run_id: str, n: int) -> dict:
         return self._request("GET", f"/runs/{run_id}/generations/{n}")
 
+    def list_breeding_events(self, run_id: str) -> list[dict]:
+        return self._request("GET", f"/runs/{run_id}/breeding_events")
+
     def get_strategy(self, run_id: str, strategy_id: str) -> dict:
         return self._request("GET", f"/runs/{run_id}/strategies/{strategy_id}")
 

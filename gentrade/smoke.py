@@ -97,7 +97,7 @@ def run_one_generation(population_size: int = 4, seed: int = SEED) -> pd.DataFra
     ranking, weights = apply_ranking(fitness)
 
     # exercise the breeding step too
-    next_population = generate_population(ranking, weights, population_size=population_size)
+    next_population, _events = generate_population(ranking, weights, population_size=population_size)
     assert len(next_population) == population_size
     return ranking
 

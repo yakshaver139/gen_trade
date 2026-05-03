@@ -202,6 +202,113 @@ def _render(run: dict) -> None:
                 unsafe_allow_html=True,
             )
 
+    # ---------------- breeding activity ----------------
+    try:
+        events = client.list_breeding_events(run_id)
+    except ApiError as e:
+        st.error(f"failed to load breeding events: {e}")
+        events = []
+
+    if events:
+        st.subheader("Breeding activity")
+        ev_df = pd.DataFrame(events)
+        # Operator counts per generation → stacked bar.
+        # The (elite) carry-over is shown alongside the seven mutation operators.
+        op_counts = (
+            ev_df.groupby(["generation_number", "operator"])
+            .size()
+            .reset_index(name="count")
+        )
+
+        operator_palette = {
+            "(elite)": "#888888",
+            "perturb_threshold": "#1f77b4",
+            "flip_operator": "#ff7f0e",
+            "swap_indicator": "#2ca02c",
+            "flip_conjunction": "#d62728",
+            "add_signal": "#9467bd",
+            "remove_signal": "#8c564b",
+            "swap_rel_target": "#e377c2",
+        }
+
+        fig_op = go.Figure()
+        # One bar trace per operator so they stack.
+        seen_ops = list(op_counts["operator"].unique())
+        # Plot in the palette order so the legend reads sensibly.
+        for op in operator_palette:
+            if op not in seen_ops:
+                continue
+            sub = op_counts[op_counts["operator"] == op]
+            fig_op.add_trace(go.Bar(
+                x=sub["generation_number"],
+                y=sub["count"],
+                name=op,
+                marker={"color": operator_palette.get(op, "#444")},
+            ))
+        # Any operator the run produced that wasn't in our palette (future-proof).
+        for op in seen_ops:
+            if op in operator_palette:
+                continue
+            sub = op_counts[op_counts["operator"] == op]
+            fig_op.add_trace(go.Bar(
+                x=sub["generation_number"], y=sub["count"], name=op,
+            ))
+
+        fig_op.update_layout(
+            barmode="stack",
+            xaxis_title="generation",
+            yaxis_title="children",
+            margin={"t": 20},
+            height=320,
+            legend={"orientation": "h", "y": 1.05},
+        )
+        st.plotly_chart(fig_op, use_container_width=True)
+        st.caption(CHART_HELP["operator_counts"])
+
+        with st.expander(f"event log ({len(events)} events)", expanded=False):
+            # Tint each row by operator. Elites get a soft grey;
+            # parameter mutations a blue tint; structural ones a green
+            # tint; failures a red tint.
+            def _row_tint(op: str, applied: bool) -> str:
+                if not applied and op != "(elite)":
+                    return "rgba(214, 39, 40, 0.10)"
+                if op == "(elite)":
+                    return "rgba(136, 136, 136, 0.10)"
+                if op in {"perturb_threshold", "flip_operator", "swap_rel_target"}:
+                    return "rgba(31, 119, 180, 0.10)"  # parameter
+                return "rgba(46, 160, 67, 0.10)"  # structural
+
+            log_columns = [
+                {"key": "gen", "label": "Gen", "align": "right"},
+                {"key": "child", "label": "Child"},
+                {"key": "parents", "label": "Parents (a / b)"},
+                {"key": "operator", "label": "Operator"},
+                {"key": "applied", "label": "Applied", "align": "center"},
+                {"key": "reason", "label": "Reason"},
+            ]
+            log_rows = [
+                {
+                    "gen": e["generation_number"],
+                    "child": e["child_id"][:8] + "…",
+                    "parents": (
+                        e["parent_a_id"][:8] + "… / " + e["parent_b_id"][:8] + "…"
+                    ),
+                    "operator": e["operator"],
+                    "applied": "✓" if e["applied"] else "—",
+                    "reason": e.get("reason") or "",
+                    "_row_style": (
+                        f"background-color: {_row_tint(e['operator'], e['applied'])};"
+                    ),
+                }
+                # newest generation first; within a gen keep the order
+                for e in reversed(events)
+            ]
+            st.markdown(
+                render_html_table(log_columns, log_rows),
+                unsafe_allow_html=True,
+            )
+            st.caption(CHART_HELP["breeding_events_table"])
+
     # ---------------- final generation population ----------------
     final_n = run.get("current_generation") or 0
     if final_n > 0:

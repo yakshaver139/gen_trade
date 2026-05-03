@@ -109,6 +109,24 @@ CHART_HELP: dict[str, str] = {
         "(TARGET_HIT / STOPPED_OUT / NO_CLOSE_IN_WINDOW). Clusters of "
         "red mean the strategy is exposed to a regime it doesn't handle."
     ),
+    "operator_counts": (
+        "Per-generation count of each mutation operator that fired while "
+        "breeding the next population. Stacked bars: structural operators "
+        "(swap_indicator / add_signal / remove_signal / flip_conjunction / "
+        "swap_rel_target) move the GA into new chromosome shapes; "
+        "parameter operators (perturb_threshold / flip_operator) tune the "
+        "shape it's already in. (elite) bars are the top strategies copied "
+        "unchanged. A run dominated by perturb_threshold is the old "
+        "mutator's signature — sign of insufficient operator diversity."
+    ),
+    "breeding_events_table": (
+        "One row per child in the population. Operator is the mutation "
+        "applied after crossover; applied=False means the operator was "
+        "inapplicable (e.g. remove_signal at min_signals) so the child "
+        "is whatever crossover produced. Parents are the two strategies "
+        "(by id) that contributed via PPX crossover. Elites carry "
+        "self-as-both-parents and operator='(elite)'."
+    ),
     "candlestick": (
         "Test-window OHLC candles, server-side downsampled to ≤1000 bars "
         "via OHLC aggregation. Blue triangles ▲ = entries; coloured "

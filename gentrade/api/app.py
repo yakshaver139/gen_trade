@@ -36,6 +36,7 @@ from gentrade.api.schemas import (
     BacktestRequest,
     BacktestResponse,
     BarOut,
+    BreedingEventOut,
     CatalogueIndicatorOut,
     CreateRunRequest,
     CreateRunResponse,
@@ -330,6 +331,22 @@ def create_app(
                 [s for s in run.strategies if s.generation_number == n],
                 key=lambda s: s.rank,
             )
+            event_rows = sorted(
+                [e for e in run.breeding_events if e.generation_number == n],
+                key=lambda e: e.id,
+            )
+            events_out = [
+                BreedingEventOut(
+                    generation_number=e.generation_number,
+                    child_id=e.child_id,
+                    parent_a_id=e.parent_a_id,
+                    parent_b_id=e.parent_b_id,
+                    operator=e.operator,
+                    applied=e.applied,
+                    reason=e.reason,
+                )
+                for e in event_rows
+            ]
             return GenerationDetailOut(
                 run_id=run_id,
                 number=n,
@@ -346,7 +363,40 @@ def create_app(
                     n_strategies_with_trades=gen.validation_n_strategies_with_trades,
                 ),
                 strategies=[_strategy_out(run_id, s) for s in strategies],
+                breeding_events=events_out,
             )
+
+    @app.get(
+        "/runs/{run_id}/breeding_events",
+        response_model=list[BreedingEventOut],
+    )
+    def get_breeding_events(run_id: str, _: None = auth) -> list[BreedingEventOut]:
+        """Every breeding event across every generation, sorted oldest first.
+
+        One row per child of every non-initial generation. Used by the
+        Run-detail page's live "Breeding activity" chart + log; folding
+        all generations into one fetch keeps the page from issuing N
+        requests on each 5-second refresh.
+        """
+        with Session(engine) as session:
+            run = session.get(RunRow, run_id)
+            if run is None:
+                raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+            return [
+                BreedingEventOut(
+                    generation_number=e.generation_number,
+                    child_id=e.child_id,
+                    parent_a_id=e.parent_a_id,
+                    parent_b_id=e.parent_b_id,
+                    operator=e.operator,
+                    applied=e.applied,
+                    reason=e.reason,
+                )
+                for e in sorted(
+                    run.breeding_events,
+                    key=lambda x: (x.generation_number, x.id),
+                )
+            ]
 
     @app.get(
         "/runs/{run_id}/strategies/{strategy_id}",

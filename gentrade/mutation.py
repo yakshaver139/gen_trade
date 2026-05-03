@@ -117,6 +117,25 @@ class MutationOutcome:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class BreedingEvent:
+    """One breeding step: parents → child, with the mutation outcome.
+
+    Recorded per non-elite child per generation so the UI can show what
+    happened at every step. Elites use a synthetic event with
+    ``operator="(elite)"`` and ``parent_a_id == parent_b_id == child_id``
+    so callers don't have to special-case empty rows.
+    """
+
+    generation_number: int
+    child_id: str
+    parent_a_id: str
+    parent_b_id: str
+    operator: str
+    applied: bool
+    reason: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Catalogue helpers (pure)
 # ---------------------------------------------------------------------------

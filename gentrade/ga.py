@@ -286,15 +286,17 @@ def run_ga(
         is_last_gen = gen_num >= cfg.max_generations
         if is_last_gen:
             next_strategies: list[dict] | None = None
+            breeding_events: list = []
         else:
             from gentrade.mutation import MutationConfig as _MutationConfig
 
             weights = compute_weights(ranked, cfg.selection_pressure)
-            next_strategies = generate_population(
+            next_strategies, breeding_events = generate_population(
                 ranked,
                 weights,
                 population_size=cfg.population_size,
                 mutation_config=cfg.mutation_config or _MutationConfig.rich(),
+                generation_number=gen_num + 1,
             )
 
         if engine is not None and run_id is not None:
@@ -313,6 +315,7 @@ def run_ga(
                 py_rng_state=py_state,
                 np_rng_state=np_state,
                 engine=engine,
+                breeding_events=breeding_events,
             )
 
         if not is_last_gen:

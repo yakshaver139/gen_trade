@@ -178,12 +178,25 @@ class StrategyOut(BaseModel):
     parsed_query: str
 
 
+class BreedingEventOut(BaseModel):
+    """One breeding event surfaced for the live UI activity view."""
+
+    generation_number: int
+    child_id: str
+    parent_a_id: str
+    parent_b_id: str
+    operator: str
+    applied: bool
+    reason: str | None = None
+
+
 class GenerationDetailOut(BaseModel):
     run_id: str
     number: int
     train_metrics: GenerationMetricsOut
     validation_metrics: GenerationMetricsOut
     strategies: list[StrategyOut]
+    breeding_events: list[BreedingEventOut] = Field(default_factory=list)
 
 
 class BacktestRequest(BaseModel):

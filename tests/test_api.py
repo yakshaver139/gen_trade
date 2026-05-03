@@ -392,6 +392,64 @@ def test_get_run_returns_404_for_unknown_id(client):
     assert r.status_code == 404
 
 
+def test_get_generation_includes_breeding_events(client):
+    """Each generation past 1 should have one breeding event per child:
+    elites carry operator='(elite)' and self-parents; bred children carry
+    a real operator + their two distinct parents."""
+    c, _ = client
+    body = c.post(
+        "/runs",
+        json={"asset": "TEST-15m", "population_size": 4, "generations": 3, "seed": 42},
+        headers={"X-API-Key": API_KEY},
+    ).json()
+    _wait_for_status(c, body["run_id"], target="reported")
+
+    # Generation 2 was bred from gen 1, so we should see 4 events.
+    r = c.get(f"/runs/{body['run_id']}/generations/2", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 200
+    detail = r.json()
+    events = detail["breeding_events"]
+    assert len(events) == 4
+
+    # Required event shape for each child
+    for ev in events:
+        for k in ("generation_number", "child_id", "parent_a_id",
+                  "parent_b_id", "operator", "applied"):
+            assert k in ev
+        assert ev["generation_number"] == 2
+
+    # Two elites with operator='(elite)' and self-as-both-parents.
+    elites = [e for e in events if e["operator"] == "(elite)"]
+    assert len(elites) == 2
+    for e in elites:
+        assert e["parent_a_id"] == e["parent_b_id"] == e["child_id"]
+
+    # The non-elite children must have an operator from the rich set.
+    bred = [e for e in events if e["operator"] != "(elite)"]
+    assert len(bred) == 2
+    valid_ops = {
+        "perturb_threshold", "flip_operator", "swap_indicator",
+        "flip_conjunction", "add_signal", "remove_signal", "swap_rel_target",
+    }
+    for e in bred:
+        assert e["operator"] in valid_ops
+
+
+def test_get_generation_one_has_no_breeding_events(client):
+    """Generation 1 is the initial random pool — no breeding has happened."""
+    c, _ = client
+    body = c.post(
+        "/runs",
+        json={"asset": "TEST-15m", "population_size": 4, "generations": 2, "seed": 42},
+        headers={"X-API-Key": API_KEY},
+    ).json()
+    _wait_for_status(c, body["run_id"], target="reported")
+
+    r = c.get(f"/runs/{body['run_id']}/generations/1", headers={"X-API-Key": API_KEY})
+    assert r.status_code == 200
+    assert r.json()["breeding_events"] == []
+
+
 def test_get_generation_returns_strategies(client):
     c, _ = client
     r = c.post(

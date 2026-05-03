@@ -122,6 +122,12 @@ class RunRow(Base):
         cascade="all, delete-orphan",
         order_by="(StrategyRow.generation_number, StrategyRow.rank)",
     )
+    breeding_events: Mapped[list[BreedingEventRow]] = relationship(
+        cascade="all, delete-orphan",
+        order_by="(BreedingEventRow.generation_number, BreedingEventRow.id)",
+        primaryjoin="RunRow.id == BreedingEventRow.run_id",
+        foreign_keys="BreedingEventRow.run_id",
+    )
 
 
 class GenerationRow(Base):
@@ -162,6 +168,24 @@ class StrategyRow(Base):
     conjunctions_json: Mapped[str] = mapped_column(Text)
 
     run: Mapped[RunRow] = relationship(back_populates="strategies")
+
+
+class BreedingEventRow(Base):
+    """Per-child audit trail: which parents made it, and which mutation
+    operator (if any) altered it. Drives the live "Breeding activity"
+    visualisation on Run detail."""
+
+    __tablename__ = "breeding_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"))
+    generation_number: Mapped[int] = mapped_column(Integer)
+    child_id: Mapped[str] = mapped_column(String)
+    parent_a_id: Mapped[str] = mapped_column(String)
+    parent_b_id: Mapped[str] = mapped_column(String)
+    operator: Mapped[str] = mapped_column(String)
+    applied: Mapped[bool] = mapped_column()
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 # ---------------------------------------------------------------------------
@@ -305,11 +329,18 @@ def checkpoint_generation(
     py_rng_state: bytes,
     np_rng_state: bytes,
     engine: Engine,
+    breeding_events: list | None = None,
 ) -> None:
     """Persist the just-completed generation and (optionally) the next-gen population.
 
     Idempotent at the (run_id, generation_number) granularity: re-checkpointing
-    the same generation overwrites prior strategy rows for that generation.
+    the same generation overwrites prior strategy + breeding-event rows for
+    the relevant generation_number.
+
+    ``breeding_events`` are :class:`gentrade.mutation.BreedingEvent`
+    instances for the *next* generation's children — recording how each
+    chromosome in next_population came to exist (parents + mutation
+    operator). Empty list / None for the final generation.
     """
     with Session(engine) as session:
         run_row = session.get(RunRow, run_id)
@@ -377,6 +408,31 @@ def checkpoint_generation(
                 validation_n_strategies_with_trades=snapshot.validation_metrics.n_strategies_with_trades,
             )
         )
+
+        # Persist per-child breeding events for the next-generation children.
+        # Idempotent at (run_id, generation_number) — clear any existing
+        # rows for the same generation before inserting.
+        if breeding_events:
+            target_gen = breeding_events[0].generation_number
+            session.execute(
+                delete(BreedingEventRow).where(
+                    BreedingEventRow.run_id == run_id,
+                    BreedingEventRow.generation_number == target_gen,
+                )
+            )
+            for ev in breeding_events:
+                session.add(
+                    BreedingEventRow(
+                        run_id=run_id,
+                        generation_number=ev.generation_number,
+                        child_id=ev.child_id,
+                        parent_a_id=ev.parent_a_id,
+                        parent_b_id=ev.parent_b_id,
+                        operator=ev.operator,
+                        applied=ev.applied,
+                        reason=ev.reason,
+                    )
+                )
 
         run_row.current_generation = snapshot.generation
         run_row.py_rng_state = py_rng_state
